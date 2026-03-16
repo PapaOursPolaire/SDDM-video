@@ -4,6 +4,8 @@
 #  Thème SDDM avec vidéo en arrière-plan — Qt5/Qt6 — Debian/Arch/Fedora/openSUSE
 #
 #  Fonctionnalités :
+#    ✔ Vidéo par défaut (default.mp4) téléchargée automatiquement depuis le dépôt
+#    ✔ Vidéo personnalisée sélectionnable — annulez le sélecteur pour garder default.mp4
 #    ✔ Vidéo configurable via theme.conf (sans réinstaller)
 #    ✔ Interface SDDM complète : session, disposition clavier, login/reboot/shutdown
 #    ✔ Panneau loginterminalc.png récupéré depuis le dépôt GitHub
@@ -43,6 +45,55 @@ if [[ $EUID -ne 0 ]]; then
     die "Ce script doit être exécuté en root : sudo bash $0"
 fi
 
+# ─── Pre-flight : vérifications avant de toucher au système ──────────────────
+preflight_checks() {
+    local errors=0
+
+    # Bash 4.0+ requis (${var,,} pour la mise en minuscules)
+    if [[ "${BASH_VERSINFO[0]}" -lt 4 ]]; then
+        echo -e "  ${RED}✘${NC}  Bash 4.0+ requis (version actuelle : $BASH_VERSION)" >&2
+        errors=$((errors + 1))
+    fi
+
+    # curl ou wget requis (téléchargement vidéo par défaut + assets)
+    if ! command -v curl &>/dev/null && ! command -v wget &>/dev/null; then
+        echo -e "  ${RED}✘${NC}  curl ou wget requis — installez l'un ou l'autre :" >&2
+        echo -e "       apt : sudo apt-get install curl" >&2
+        echo -e "       pacman : sudo pacman -S curl" >&2
+        errors=$((errors + 1))
+    fi
+
+    # systemctl requis pour activer/désactiver les services
+    if ! command -v systemctl &>/dev/null; then
+        echo -e "  ${YEL}⚠${NC}  systemctl absent — l'activation automatique de SDDM sera ignorée." >&2
+        # Avertissement seulement, pas un blocage
+    fi
+
+    # Un gestionnaire de paquets connu doit être présent
+    if ! command -v apt-get &>/dev/null && \
+       ! command -v pacman  &>/dev/null && \
+       ! command -v dnf     &>/dev/null && \
+       ! command -v zypper  &>/dev/null; then
+        echo -e "  ${RED}✘${NC}  Gestionnaire de paquets non reconnu (apt/pacman/dnf/zypper requis)." >&2
+        errors=$((errors + 1))
+    fi
+
+    # /usr/share/sddm/themes doit être accessible en écriture (via root)
+    if [[ ! -w "/usr/share/sddm" ]] && [[ ! -w "/usr/share" ]]; then
+        echo -e "  ${RED}✘${NC}  /usr/share/sddm n'est pas accessible en écriture." >&2
+        errors=$((errors + 1))
+    fi
+
+    if [[ $errors -gt 0 ]]; then
+        echo "" >&2
+        die "$errors problème(s) bloquant(s) détecté(s). Corrigez-les avant de relancer."
+    fi
+
+    ok "Pre-flight : toutes les vérifications sont passées."
+}
+
+preflight_checks
+
 # ─── Bannière ────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${CYN}╔═══════════════════════════════════════════════════════╗"
@@ -54,9 +105,39 @@ echo ""
 #  FONCTIONS UTILITAIRES
 # =============================================================================
 
+# ─── Téléchargement de la vidéo par défaut depuis le dépôt ──────────────────
+download_default_video() {
+    local default_name="default.mp4"
+    local default_dest="/tmp/${default_name}"
+
+    info "Téléchargement de la vidéo par défaut ($default_name) depuis le dépôt..."
+    local success=1
+
+    if command -v curl &>/dev/null; then
+        curl -fL --max-time 120 --progress-bar \
+            "$REPO_RAW/$default_name" -o "$default_dest" 2>&1 && success=0
+    elif command -v wget &>/dev/null; then
+        wget --timeout=120 --show-progress -q \
+            "$REPO_RAW/$default_name" -O "$default_dest" 2>&1 && success=0
+    else
+        die "curl ou wget requis pour télécharger la vidéo par défaut."
+    fi
+
+    if [[ $success -ne 0 ]] || [[ ! -s "$default_dest" ]]; then
+        rm -f "$default_dest"
+        die "Impossible de télécharger $default_name depuis $REPO_RAW"
+    fi
+
+    VIDEO_PATH="$default_dest"
+    ok "Vidéo par défaut téléchargée : $default_dest"
+}
+
 # ─── Sélection de la vidéo ───────────────────────────────────────────────────
 select_video() {
     VIDEO_PATH=""
+
+    echo -e "  ${CYN}Appuyez sur Entrée / Annulez le sélecteur pour utiliser la vidéo par défaut du dépôt (default.mp4).${NC}"
+    echo ""
 
     # Essai kdialog (KDE)
     if command -v kdialog &>/dev/null && [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
@@ -64,7 +145,7 @@ select_video() {
         VIDEO_PATH=$(sudo -u "${SUDO_USER:-$USER}" kdialog \
             --getopenfilename "${HOME:-/home}" \
             "*.mp4 *.webm *.avi *.mkv *.mov *.gif" \
-            --title "Sélectionnez votre vidéo de fond SDDM" 2>/dev/null) || VIDEO_PATH=""
+            --title "Sélectionnez votre vidéo — Annulez pour utiliser default.mp4" 2>/dev/null) || VIDEO_PATH=""
     fi
 
     # Essai zenity (GTK/GNOME)
@@ -72,7 +153,7 @@ select_video() {
         info "Ouverture du sélecteur de fichiers (zenity)..."
         VIDEO_PATH=$(sudo -u "${SUDO_USER:-$USER}" zenity \
             --file-selection \
-            --title="Sélectionnez votre vidéo de fond SDDM" \
+            --title="Sélectionnez votre vidéo — Annulez pour utiliser default.mp4" \
             --file-filter="Vidéos | *.mp4 *.webm *.avi *.mkv *.mov *.gif" \
             2>/dev/null) || VIDEO_PATH=""
     fi
@@ -82,18 +163,25 @@ select_video() {
         info "Ouverture du sélecteur de fichiers (yad)..."
         VIDEO_PATH=$(sudo -u "${SUDO_USER:-$USER}" yad \
             --file \
-            --title="Sélectionnez votre vidéo de fond SDDM" \
+            --title="Sélectionnez votre vidéo — Annulez pour utiliser default.mp4" \
             2>/dev/null) || VIDEO_PATH=""
     fi
 
-    # Saisie manuelle en dernier recours
+    # Saisie manuelle si aucun sélecteur graphique
     if [[ -z "$VIDEO_PATH" ]]; then
         warn "Aucun sélecteur graphique disponible."
-        read -rp "  Chemin complet vers votre vidéo : " VIDEO_PATH
+        echo -e "  Entrez le chemin vers votre vidéo, ou ${CYN}laissez vide${NC} pour utiliser default.mp4 :"
+        read -rp "  Chemin : " VIDEO_PATH
     fi
 
-    # Vérifications
-    [[ -z "$VIDEO_PATH" ]] && die "Aucune vidéo sélectionnée."
+    # ── Fallback : vidéo par défaut du dépôt ─────────────────────────────────
+    if [[ -z "$VIDEO_PATH" ]]; then
+        info "Aucune vidéo choisie → utilisation de default.mp4 depuis le dépôt."
+        download_default_video
+        return
+    fi
+
+    # Vérifications sur le fichier fourni par l'utilisateur
     [[ ! -f "$VIDEO_PATH" ]] && die "Fichier introuvable : '$VIDEO_PATH'"
 
     local ext="${VIDEO_PATH##*.}"
@@ -106,7 +194,7 @@ select_video() {
     ok "Vidéo sélectionnée : $(basename "$VIDEO_PATH") ($ext)"
 }
 
-# ─── Copie de la vidéo et mise à jour de theme.conf ─────────────────────────
+# ─── Copie/déplacement de la vidéo et mise à jour de theme.conf ──────────────
 install_video() {
     # Nom de fichier nettoyé (espaces → underscores, caractères spéciaux retirés)
     FILENAME=$(basename "$VIDEO_PATH" | tr ' ' '_' | tr -cd '[:alnum:]._-')
@@ -122,8 +210,14 @@ install_video() {
         fi
     fi
 
-    info "Copie de la vidéo vers $dest ..."
-    cp "$VIDEO_PATH" "$dest"
+    # Déplacement si le fichier vient de /tmp (téléchargé), copie sinon
+    if [[ "$VIDEO_PATH" == /tmp/* ]]; then
+        info "Déplacement de la vidéo vers $dest ..."
+        mv "$VIDEO_PATH" "$dest"
+    else
+        info "Copie de la vidéo vers $dest ..."
+        cp "$VIDEO_PATH" "$dest"
+    fi
     chmod 644 "$dest"
     ok "Vidéo installée : $FILENAME"
 
@@ -289,22 +383,35 @@ step "4/8" "Installation des dépendances QtMultimedia..."
 install_multimedia_deps() {
     if command -v apt-get &>/dev/null; then
         if [[ "$QT_VERSION" == "6" ]]; then
+            # Modules QML Qt6
             apt-get install -y \
                 qml6-module-qtmultimedia \
                 qml6-module-qtquick-controls \
-                qml6-module-qt5compat-graphicaleffects \
                 qt6-multimedia-dev \
                 2>/dev/null || \
             apt-get install -y \
                 qml6-module-qtmultimedia \
                 2>/dev/null || true
         else
+            # Modules QML Qt5
             apt-get install -y \
                 qml-module-qtmultimedia \
                 qml-module-qtquick-controls2 \
-                qml-module-qt-labs-folderlistmodel \
                 2>/dev/null || true
         fi
+        # GStreamer — backend de décodage vidéo (MP4/H.264, WebM, etc.)
+        # Indispensable sur Debian/Ubuntu pour que QtMultimedia puisse lire des vidéos.
+        apt-get install -y \
+            gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad \
+            gstreamer1.0-plugins-ugly \
+            gstreamer1.0-libav \
+            gstreamer1.0-tools \
+            2>/dev/null || \
+        apt-get install -y \
+            gstreamer1.0-plugins-good \
+            gstreamer1.0-libav \
+            2>/dev/null || true
 
     elif command -v pacman &>/dev/null; then
         pacman -Sy --noconfirm --needed \
@@ -317,15 +424,34 @@ install_multimedia_deps() {
 
     elif command -v dnf &>/dev/null; then
         if [[ "$QT_VERSION" == "6" ]]; then
-            dnf install -y qt6-qtmultimedia qt6-qtmultimedia-devel 2>/dev/null || true
+            dnf install -y qt6-qtmultimedia 2>/dev/null || true
         else
-            dnf install -y qt5-qtmultimedia qt5-qtmultimedia-devel 2>/dev/null || true
+            dnf install -y qt5-qtmultimedia 2>/dev/null || true
         fi
+        # GStreamer sur Fedora/RHEL
+        dnf install -y \
+            gstreamer1-plugins-good \
+            gstreamer1-plugins-bad-free \
+            gstreamer1-libav \
+            gstreamer1-plugins-ugly-free \
+            2>/dev/null || \
+        dnf install -y \
+            gstreamer1-plugins-good \
+            gstreamer1-libav \
+            2>/dev/null || true
 
     elif command -v zypper &>/dev/null; then
+        # openSUSE
         zypper install -y \
             libQt6Multimedia6 \
             qml6-module-qtmultimedia \
+            gstreamer-plugins-good \
+            gstreamer-plugins-bad \
+            gstreamer-plugins-libav \
+            2>/dev/null || \
+        zypper install -y \
+            libQt6Multimedia6 \
+            gstreamer-plugins-good \
             2>/dev/null || true
     fi
 }
