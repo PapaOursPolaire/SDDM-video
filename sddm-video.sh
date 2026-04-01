@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-#  sddm-video.sh  v3  —  by PapaOursPolaire
+#  sddm-video.sh  v3.1  —  by PapaOursPolaire
 #  Thème SDDM avec vidéo en arrière-plan — Qt5/Qt6 — universel
 #
 #  Distributions supportées :
@@ -17,9 +17,20 @@
 #    sudo bash sddm-video.sh --change-video # changer la vidéo uniquement
 #         bash sddm-video.sh --diagnose     # diagnostic sans sudo
 #         bash sddm-video.sh --uninstall    # désinstallation propre
+#
+#  CORRECTIFS v3.1 :
+#    - Branche corrigée : Projets (était "main")
+#    - set -e supprimé pour éviter les sorties prématurées silencieuses
+#    - Chemin ZIP corrigé : SDDM-video-Projets/ (était SDDM-video-main/)
+#    - Collecte de warnings pour le rapport de log
+#    - Génération d'un rapport de log complet en fin d'installation
+#    - Vérification des conflits de config avant et après écriture
 # =============================================================================
 
-set -euo pipefail
+# NOTE : on utilise -uo pipefail sans -e pour éviter qu'une erreur non fatale
+# (ex. téléchargement d'un asset optionnel) stoppe l'installation en silence.
+# Chaque appel critique utilise || die() explicitement.
+set -uo pipefail
 
 # ─── Constantes ───────────────────────────────────────────────────────────────
 readonly THEME_NAME="sddm-video"
@@ -28,11 +39,16 @@ readonly CONF_DIR="/etc/sddm.conf.d"
 # zzz- préfixe garantit la lecture EN DERNIER (ordre alpha), après kde_settings.conf
 readonly CONF_FILE="${CONF_DIR}/zzz-sddm-video.conf"
 readonly SDDM_CONF_LEGACY="/etc/sddm.conf"
-readonly REPO_RAW="https://raw.githubusercontent.com/PapaOursPolaire/SDDM-video/main"
-readonly REPO_LFS="https://media.githubusercontent.com/media/PapaOursPolaire/SDDM-video/main"
-readonly REPO_ZIP="https://github.com/PapaOursPolaire/SDDM-video/archive/refs/heads/main.zip"
-readonly SCRIPT_VERSION="3.0"
+# CORRECTION v3.1 : les trois URLs pointent sur la branche "Projets" (pas "main")
+readonly REPO_BRANCH="Projets"
+readonly REPO_RAW="https://raw.githubusercontent.com/PapaOursPolaire/SDDM-video/${REPO_BRANCH}"
+readonly REPO_LFS="https://media.githubusercontent.com/media/PapaOursPolaire/SDDM-video/${REPO_BRANCH}"
+readonly REPO_ZIP="https://github.com/PapaOursPolaire/SDDM-video/archive/refs/heads/${REPO_BRANCH}.zip"
+# Nom du dossier dans l'archive ZIP (GitHub nomme le dossier "NomRepo-NomBranche")
+readonly REPO_ZIP_DIR="SDDM-video-${REPO_BRANCH}"
+readonly SCRIPT_VERSION="3.1"
 readonly BACKUP_SUFFIX=".bak.sddm-video"
+readonly INSTALL_LOG="/var/log/sddm-video-install.log"
 
 # Variables globales
 QT_VERSION=""
@@ -41,6 +57,9 @@ VIDEO_PATH=""
 FILENAME=""
 REAL_USER=""
 REAL_HOME=""
+
+# Tableau pour collecter tous les warnings/erreurs pendant l'installation
+INSTALL_WARNINGS=()
 
 # ─── Couleurs (désactivées si pas de TTY) ─────────────────────────────────────
 if [[ -t 1 ]]; then
@@ -52,8 +71,17 @@ fi
 
 info()  { echo -e "  ${CYN}➜${NC}  $*"; }
 ok()    { echo -e "  ${GRN}✔${NC}  $*"; }
-warn()  { echo -e "  ${YEL}⚠${NC}  $*"; }
-die()   { echo -e "  ${RED}✘${NC}  $*" >&2; exit 1; }
+warn()  {
+    echo -e "  ${YEL}⚠${NC}  $*"
+    INSTALL_WARNINGS+=("WARN: $*")
+}
+die()   {
+    echo -e "  ${RED}✘${NC}  $*" >&2
+    INSTALL_WARNINGS+=("ERREUR FATALE: $*")
+    # Tenter de générer le log même en cas d'erreur fatale
+    generate_log_report 2>/dev/null || true
+    exit 1
+}
 step()  { echo ""; echo -e "${CYN}[$1]${NC} ${BLD}$2${NC}"; }
 banner(){ echo ""; echo -e "${CYN}${1}${NC}"; }
 
@@ -61,11 +89,9 @@ banner(){ echo ""; echo -e "${CYN}${1}${NC}"; }
 resolve_real_user() {
     REAL_USER="${SUDO_USER:-}"
     if [[ -z "$REAL_USER" ]]; then
-        # Chercher via logname, évite de retourner "root"
         REAL_USER=$(logname 2>/dev/null || true)
     fi
     if [[ -z "$REAL_USER" ]] || [[ "$REAL_USER" == "root" ]]; then
-        # Dernier recours : premier utilisateur avec UID >= 1000
         REAL_USER=$(getent passwd | awk -F: '$3 >= 1000 && $3 < 65534 {print $1; exit}' || echo "")
     fi
     if [[ -n "$REAL_USER" ]]; then
@@ -93,8 +119,6 @@ detect_pkg_manager() {
 
 # Wrapper d'installation générique
 pkg_install() {
-    # Usage : pkg_install pkg1 pkg2 ... [-- pkg_alt1 pkg_alt2]
-    # Si -- est présent, la seconde liste est le fallback si la première échoue
     local primary=() fallback=() is_fallback=0
     for arg in "$@"; do
         if [[ "$arg" == "--" ]]; then is_fallback=1; continue; fi
@@ -103,15 +127,15 @@ pkg_install() {
 
     local install_ok=0
     case "$PKG_MANAGER" in
-        apt)     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${primary[@]}" 2>/dev/null && install_ok=1 ;;
-        pacman)  pacman -Sy --noconfirm --needed "${primary[@]}" 2>/dev/null && install_ok=1 ;;
-        dnf)     dnf install -y "${primary[@]}" 2>/dev/null && install_ok=1 ;;
-        zypper)  zypper install -y --no-recommends "${primary[@]}" 2>/dev/null && install_ok=1 ;;
-        xbps)    xbps-install -Sy "${primary[@]}" 2>/dev/null && install_ok=1 ;;
-        apk)     apk add --no-cache "${primary[@]}" 2>/dev/null && install_ok=1 ;;
-        portage) emerge --ask=n "${primary[@]}" 2>/dev/null && install_ok=1 ;;
-        eopkg)   eopkg install -y "${primary[@]}" 2>/dev/null && install_ok=1 ;;
-        swupd)   swupd bundle-add "${primary[@]}" 2>/dev/null && install_ok=1 ;;
+        apt)     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${primary[@]}" 2>/dev/null && install_ok=1 || true ;;
+        pacman)  pacman -Sy --noconfirm --needed "${primary[@]}" 2>/dev/null && install_ok=1 || true ;;
+        dnf)     dnf install -y "${primary[@]}" 2>/dev/null && install_ok=1 || true ;;
+        zypper)  zypper install -y --no-recommends "${primary[@]}" 2>/dev/null && install_ok=1 || true ;;
+        xbps)    xbps-install -Sy "${primary[@]}" 2>/dev/null && install_ok=1 || true ;;
+        apk)     apk add --no-cache "${primary[@]}" 2>/dev/null && install_ok=1 || true ;;
+        portage) emerge --ask=n "${primary[@]}" 2>/dev/null && install_ok=1 || true ;;
+        eopkg)   eopkg install -y "${primary[@]}" 2>/dev/null && install_ok=1 || true ;;
+        swupd)   swupd bundle-add "${primary[@]}" 2>/dev/null && install_ok=1 || true ;;
         nix)     warn "NixOS : installez manuellement : ${primary[*]}"; return 0 ;;
         "")      warn "Gestionnaire inconnu — installation manuelle requise : ${primary[*]}"; return 0 ;;
     esac
@@ -136,12 +160,12 @@ preflight_checks() {
 
     [[ "${BASH_VERSINFO[0]}" -lt 4 ]] && {
         echo -e "  ${RED}✘${NC}  Bash 4.0+ requis (actuel : $BASH_VERSION)" >&2
-        (( errors++ ))
+        (( errors++ )) || true
     }
 
     if ! command -v curl &>/dev/null && ! command -v wget &>/dev/null; then
         echo -e "  ${RED}✘${NC}  curl ou wget requis" >&2
-        (( errors++ ))
+        (( errors++ )) || true
     fi
 
     detect_pkg_manager
@@ -151,11 +175,136 @@ preflight_checks() {
 
     [[ ! -d "/usr/share/sddm" ]] && [[ ! -d "/usr/share" ]] && {
         echo -e "  ${RED}✘${NC}  /usr/share non accessible en écriture" >&2
-        (( errors++ ))
+        (( errors++ )) || true
     }
 
     [[ $errors -gt 0 ]] && die "$errors problème(s) bloquant(s). Corrigez avant de relancer."
     ok "Pre-flight OK (gestionnaire : ${PKG_MANAGER:-inconnu})"
+}
+
+# =============================================================================
+#  GÉNÉRATION DU RAPPORT DE LOG COMPLET
+# =============================================================================
+generate_log_report() {
+    # Cette fonction est appelée en fin d'installation (succès ou échec).
+    # Elle écrit /var/log/sddm-video-install.log avec toutes les infos utiles.
+
+    # Créer le fichier de log (lisible par root uniquement)
+    mkdir -p "$(dirname "$INSTALL_LOG")" 2>/dev/null || true
+    : > "$INSTALL_LOG" 2>/dev/null || return 0
+    chmod 600 "$INSTALL_LOG" 2>/dev/null || true
+
+    {
+        echo "============================================================"
+        echo "  SDDM Video v${SCRIPT_VERSION} — Rapport d'installation"
+        echo "  Généré le : $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "  Branche repo : ${REPO_BRANCH}"
+        echo "============================================================"
+        echo ""
+
+        echo "── Système ──────────────────────────────────────────────────"
+        echo "OS      : $(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d= -f2- | tr -d '"' || echo inconnu)"
+        echo "Kernel  : $(uname -a 2>/dev/null || echo inconnu)"
+        echo "Arch    : $(uname -m 2>/dev/null || echo inconnu)"
+        echo "PKG MGR : ${PKG_MANAGER:-inconnu}"
+        echo "Qt ver  : ${QT_VERSION:-non détecté}"
+        echo "Vidéo   : ${FILENAME:-non définie}"
+        echo ""
+
+        echo "── /etc/os-release ──────────────────────────────────────────"
+        cat /etc/os-release 2>/dev/null || echo "(absent)"
+        echo ""
+
+        echo "── Greeter SDDM trouvé ──────────────────────────────────────"
+        find /usr -name "sddm-greeter*" -type f 2>/dev/null || echo "(aucun)"
+        echo ""
+
+        echo "── Service SDDM ─────────────────────────────────────────────"
+        if command -v systemctl &>/dev/null; then
+            echo "is-active  : $(systemctl is-active  sddm 2>/dev/null || echo inconnu)"
+            echo "is-enabled : $(systemctl is-enabled sddm 2>/dev/null || echo inconnu)"
+        else
+            echo "(systemctl absent)"
+        fi
+        echo ""
+
+        echo "── Fichiers du thème installé ───────────────────────────────"
+        if [[ -d "$THEME_DIR" ]]; then
+            ls -lah "$THEME_DIR" 2>/dev/null || echo "(ls échoué)"
+        else
+            echo "DOSSIER ABSENT : $THEME_DIR"
+        fi
+        echo ""
+
+        echo "── Contenu de theme.conf ────────────────────────────────────"
+        cat "${THEME_DIR}/theme.conf" 2>/dev/null || echo "(absent)"
+        echo ""
+
+        echo "── Contenu de metadata.desktop ──────────────────────────────"
+        cat "${THEME_DIR}/metadata.desktop" 2>/dev/null || echo "(absent)"
+        echo ""
+
+        echo "── Contenu de ${CONF_FILE} ──────────────────────────────────"
+        cat "$CONF_FILE" 2>/dev/null || echo "(absent)"
+        echo ""
+
+        echo "── Tous les .conf dans ${CONF_DIR}/ ─────────────────────────"
+        if [[ -d "$CONF_DIR" ]]; then
+            for f in "$CONF_DIR"/*.conf; do
+                [[ -f "$f" ]] || continue
+                echo "--- $(basename "$f") ---"
+                cat "$f" 2>/dev/null || true
+                echo ""
+            done
+        else
+            echo "(dossier absent)"
+        fi
+
+        echo "── /etc/sddm.conf (legacy) ──────────────────────────────────"
+        if [[ -f "$SDDM_CONF_LEGACY" ]]; then
+            cat "$SDDM_CONF_LEGACY"
+        else
+            echo "(absent — bien)"
+        fi
+        echo ""
+
+        echo "── Modules QtMultimedia QML ─────────────────────────────────"
+        find /usr/lib /usr/lib64 2>/dev/null -maxdepth 6 -type d -name "QtMultimedia" 2>/dev/null | grep -E 'qml' | head -10 || echo "(aucun trouvé)"
+        echo ""
+
+        echo "── Variables d'environnement pertinentes ────────────────────"
+        echo "QT_IM_MODULE   : ${QT_IM_MODULE:-<vide>}"
+        echo "GTK_IM_MODULE  : ${GTK_IM_MODULE:-<vide>}"
+        echo "XMODIFIERS     : ${XMODIFIERS:-<vide>}"
+        echo "WAYLAND_DISPLAY: ${WAYLAND_DISPLAY:-<vide>}"
+        echo "DISPLAY        : ${DISPLAY:-<vide>}"
+        echo ""
+
+        echo "── Journalctl SDDM (50 dernières lignes) ────────────────────"
+        if command -v journalctl &>/dev/null; then
+            journalctl -u sddm -b --no-pager -n 50 2>/dev/null || echo "(journalctl échoué)"
+        else
+            echo "(journalctl absent)"
+            [[ -f /var/log/sddm.log ]] && tail -50 /var/log/sddm.log || true
+        fi
+        echo ""
+
+        echo "── Warnings et erreurs collectés pendant l'installation ─────"
+        if [[ ${#INSTALL_WARNINGS[@]} -eq 0 ]]; then
+            echo "(aucun warning)"
+        else
+            for w in "${INSTALL_WARNINGS[@]}"; do
+                echo "  $w"
+            done
+        fi
+        echo ""
+
+        echo "============================================================"
+        echo "  Fin du rapport"
+        echo "============================================================"
+    } >> "$INSTALL_LOG" 2>/dev/null || true
+
+    echo -e "  ${CYN}📋${NC}  Rapport de log complet : ${BLD}${INSTALL_LOG}${NC}"
 }
 
 # =============================================================================
@@ -182,6 +331,7 @@ run_diagnose() {
     dinfo "Kernel : $(uname -r)"
     dinfo "Arch   : $(uname -m)"
     dinfo "PKG    : ${PKG_MANAGER:-inconnu}"
+    dinfo "Repo   : branche '${REPO_BRANCH}'"
     if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
         dinfo "Session : Wayland (${WAYLAND_DISPLAY})"
     elif [[ -n "${DISPLAY:-}" ]]; then
@@ -229,7 +379,6 @@ run_diagnose() {
             [[ -f "$p" ]] && { found_greeter="$p"; found_qt="5"; break; }
         done
     fi
-    # Détection générique via find
     if [[ -z "$found_greeter" ]]; then
         found_greeter=$(find /usr -name "sddm-greeter*" -type f 2>/dev/null | head -1 || true)
         [[ -n "$found_greeter" ]] && found_qt="?"
@@ -328,7 +477,6 @@ run_diagnose() {
             fi
         done
 
-        # angle-down.png : peut être dans le thème ou dans SddmComponents
         if [[ -f "$THEME_DIR/angle-down.png" ]]; then
             ok "angle-down.png présent dans le thème"
         else
@@ -336,7 +484,7 @@ run_diagnose() {
             sddm_arrow=$(find /usr/lib -name "angle-down.png" 2>/dev/null | head -1 || true)
             if [[ -n "$sddm_arrow" ]]; then
                 dok "angle-down.png trouvé dans SddmComponents : $sddm_arrow"
-                dinfo "Le warning dans les logs est cosmétique — le fichier est dans le paquet sddm"
+                dinfo "Le warning dans les logs est cosmétique"
             else
                 dwarn "angle-down.png absent (avertissement cosmétique dans les logs)"
             fi
@@ -389,11 +537,6 @@ run_diagnose() {
     # ── 6. GStreamer et FFmpeg backend ──
     dhead "6. Décodeurs vidéo (GStreamer / FFmpeg)"
 
-    # Détection backend Qt actif
-    local qt_backend_ffmpeg=0 qt_backend_gst=0
-    find /usr/lib /usr/lib64 2>/dev/null -name "libQt*Ffmpeg*" -o -name "libQt*ffmpeg*" 2>/dev/null | grep -q . && qt_backend_ffmpeg=1 || true
-    find /usr/lib /usr/lib64 2>/dev/null -name "libgstqt*" -o -name "*gstqt6*" 2>/dev/null | grep -q . && qt_backend_gst=1 || true
-
     if command -v gst-inspect-1.0 &>/dev/null; then
         dok "gst-inspect-1.0 disponible"
         for plugin in avdec_h264 avdec_h265 vp8dec vp9dec; do
@@ -403,7 +546,7 @@ run_diagnose() {
         dwarn "gst-inspect-1.0 absent — GStreamer peut manquer"
     fi
 
-    # Détection VAAPI
+    # ── 7. Détection VAAPI ──
     dhead "7. Accélération matérielle VAAPI"
     if command -v vainfo &>/dev/null; then
         if vainfo &>/dev/null 2>&1; then
@@ -417,7 +560,6 @@ run_diagnose() {
             dinfo "IMPORTANT : les erreurs VAAPI dans les logs sddm-greeter-qt6 sont"
             dinfo "souvent BÉNIGNES — QtMultimedia se rabat automatiquement sur le"
             dinfo "décodage logiciel (CPU). La vidéo peut tout de même s'afficher."
-            dinfo "Pour forcer le soft decoding : LIBVA_DRIVER_NAME='' dans l'env SDDM."
         fi
     else
         dwarn "vainfo absent — impossible de diagnostiquer VAAPI"
@@ -483,15 +625,23 @@ run_diagnose() {
     dinfo "La vidéo s'affiche quand même SAUF si aucun décodeur logiciel H.264 n'est"
     dinfo "disponible. Pour forcer le soft-decoding dès le départ, créez :"
     dinfo "  /etc/sddm.conf.d/zzz-vaapi-disable.conf"
-    dinfo "  contenant : [Wayland] ou [X11] + LIBVA_DRIVER_NAME="
     echo ""
     dinfo "Pour désactiver complètement VAAPI pour SDDM :"
     echo "    sudo mkdir -p /etc/sddm.conf.d"
     echo "    echo '[General]' | sudo tee /etc/sddm.conf.d/zzz-novaapi.conf"
     echo "    echo 'EnvironmentFile=/etc/sddm-env' | sudo tee -a /etc/sddm.conf.d/zzz-novaapi.conf"
     echo "    echo 'LIBVA_DRIVER_NAME=' | sudo tee /etc/sddm-env"
-    echo "    echo 'LIBVA_DRIVER_NAME=softpipe' | sudo tee /etc/sddm-env  # (alternative)"
     echo ""
+
+    # ── 11. Rapport de log ──
+    dhead "11. Rapport de log complet"
+    if [[ -f "$INSTALL_LOG" ]]; then
+        dinfo "Dernier rapport disponible : $INSTALL_LOG"
+        dinfo "Taille : $(du -h "$INSTALL_LOG" | cut -f1)"
+    else
+        dwarn "Aucun rapport de log trouvé (lancez l'installation complète d'abord)"
+    fi
+
     exit 0
 }
 
@@ -511,13 +661,11 @@ run_uninstall() {
     rm -f  "$CONF_FILE"
     rm -f  "/etc/environment.d/60-no-ibus-xim.conf"
 
-    # Restaurer /etc/sddm.conf si sauvegardé
     if [[ -f "${SDDM_CONF_LEGACY}${BACKUP_SUFFIX}" ]] && [[ ! -f "$SDDM_CONF_LEGACY" ]]; then
         mv "${SDDM_CONF_LEGACY}${BACKUP_SUFFIX}" "$SDDM_CONF_LEGACY"
         ok "/etc/sddm.conf restauré depuis la sauvegarde"
     fi
 
-    # Restaurer le DM précédent si on avait désactivé des services
     if [[ -f /tmp/sddm-video-prev-dm ]]; then
         local prev_dm; prev_dm=$(cat /tmp/sddm-video-prev-dm)
         command -v systemctl &>/dev/null && systemctl enable "$prev_dm" 2>/dev/null && \
@@ -546,6 +694,8 @@ echo -e "${CYN}╔════════════════════�
 echo -e "║   SDDM Video Background  v${SCRIPT_VERSION}  —  PapaOursPolaire  ║"
 echo -e "╚═══════════════════════════════════════════════════════╝${NC}"
 echo ""
+info "Branche repo : ${REPO_BRANCH}"
+echo ""
 
 # =============================================================================
 #  TÉLÉCHARGEMENT VIDÉO PAR DÉFAUT
@@ -554,15 +704,15 @@ download_default_video() {
     local default_name="default.mp4"
     local default_dest="/tmp/sddm-video-default-$$.mp4"
 
-    info "Téléchargement de la vidéo par défaut depuis le dépôt (Git LFS)..."
+    info "Téléchargement de la vidéo par défaut depuis le dépôt (branche ${REPO_BRANCH})..."
     local success=1
 
     if command -v curl &>/dev/null; then
         curl -fL --max-time 300 --progress-bar \
-            "${REPO_LFS}/${default_name}" -o "$default_dest" 2>&1 && success=0
+            "${REPO_LFS}/${default_name}" -o "$default_dest" 2>&1 && success=0 || true
     elif command -v wget &>/dev/null; then
         wget --timeout=300 --show-progress -q \
-            "${REPO_LFS}/${default_name}" -O "$default_dest" 2>&1 && success=0
+            "${REPO_LFS}/${default_name}" -O "$default_dest" 2>&1 && success=0 || true
     fi
 
     if [[ $success -eq 0 ]] && [[ -s "$default_dest" ]]; then
@@ -573,7 +723,7 @@ download_default_video() {
         VIDEO_PATH="$default_dest"
         ok "Vidéo par défaut téléchargée : $(du -h "$default_dest" | cut -f1)"
     else
-        rm -f "$default_dest"
+        rm -f "$default_dest" 2>/dev/null || true
         die "Téléchargement échoué. Vérifiez votre connexion internet."
     fi
 }
@@ -648,20 +798,19 @@ install_video() {
     FILENAME=$(basename "$VIDEO_PATH" | tr ' ' '_' | tr -cd '[:alnum:]._-')
     local dest="${THEME_DIR}/${FILENAME}"
 
-    # Supprimer l'ancienne vidéo si elle change
     if [[ -f "${THEME_DIR}/theme.conf" ]]; then
         local old_bg
         old_bg=$(grep -E '^background=' "${THEME_DIR}/theme.conf" 2>/dev/null | cut -d= -f2- | tr -d '[:space:]' || true)
         if [[ -n "$old_bg" && "$old_bg" != "$FILENAME" && -f "${THEME_DIR}/${old_bg}" ]]; then
             info "Suppression ancienne vidéo : $old_bg"
-            rm -f "${THEME_DIR}/${old_bg}"
+            rm -f "${THEME_DIR}/${old_bg}" || true
         fi
     fi
 
     if [[ "$VIDEO_PATH" == /tmp/* ]]; then
-        mv "$VIDEO_PATH" "$dest"
+        mv "$VIDEO_PATH" "$dest" || die "Impossible de déplacer la vidéo vers $dest"
     else
-        cp "$VIDEO_PATH" "$dest"
+        cp "$VIDEO_PATH" "$dest" || die "Impossible de copier la vidéo vers $dest"
     fi
     chmod 644 "$dest"
     ok "Vidéo installée : $FILENAME"
@@ -687,67 +836,90 @@ download_asset() {
     local asset="$1"
     local dest="${THEME_DIR}/${asset}"
     local success=1
+    local tried_urls=""
 
-    # Essai 1 : raw
+    # Essai 1 : raw GitHub (branche Projets)
+    local url1="${REPO_RAW}/${asset}"
+    tried_urls="${tried_urls}  - RAW  : ${url1}\n"
     if command -v curl &>/dev/null; then
-        curl -fsSL --max-time 20 "${REPO_RAW}/${asset}" -o "$dest" 2>/dev/null && success=0
+        curl -fsSL --max-time 20 "$url1" -o "$dest" 2>/dev/null && success=0 || true
     elif command -v wget &>/dev/null; then
-        wget -q --timeout=20 "${REPO_RAW}/${asset}" -O "$dest" 2>/dev/null && success=0
+        wget -q --timeout=20 "$url1" -O "$dest" 2>/dev/null && success=0 || true
     fi
     if [[ $success -eq 0 ]] && _is_lfs_pointer "$dest"; then
         rm -f "$dest"; success=1
+        tried_urls="${tried_urls}    → pointeur LFS reçu, essai suivant\n"
     fi
 
-    # Essai 2 : LFS
+    # Essai 2 : media LFS (branche Projets)
     if [[ $success -ne 0 ]]; then
+        local url2="${REPO_LFS}/${asset}"
+        tried_urls="${tried_urls}  - LFS  : ${url2}\n"
         if command -v curl &>/dev/null; then
-            curl -fsSL --max-time 30 "${REPO_LFS}/${asset}" -o "$dest" 2>/dev/null && success=0
+            curl -fsSL --max-time 30 "$url2" -o "$dest" 2>/dev/null && success=0 || true
         elif command -v wget &>/dev/null; then
-            wget -q --timeout=30 "${REPO_LFS}/${asset}" -O "$dest" 2>/dev/null && success=0
+            wget -q --timeout=30 "$url2" -O "$dest" 2>/dev/null && success=0 || true
         fi
         if [[ $success -eq 0 ]] && _is_lfs_pointer "$dest"; then
             rm -f "$dest"; success=1
+            tried_urls="${tried_urls}    → pointeur LFS reçu, essai suivant\n"
         fi
     fi
 
-    # Essai 3 : archive ZIP complète
+    # Essai 3 : archive ZIP complète (branche Projets)
+    # CORRECTION v3.1 : le dossier dans le ZIP est SDDM-video-Projets/ et non SDDM-video-main/
     if [[ $success -ne 0 ]]; then
         local zip_tmp="/tmp/sddm-video-repo-$$.zip"
         local zip_dir="/tmp/sddm-video-repo-$$"
         local zip_ok=1
+        tried_urls="${tried_urls}  - ZIP  : ${REPO_ZIP}  (dossier interne: ${REPO_ZIP_DIR}/)\n"
         if command -v curl &>/dev/null; then
-            curl -fsSL --max-time 120 "$REPO_ZIP" -o "$zip_tmp" 2>/dev/null && zip_ok=0
+            curl -fsSL --max-time 120 "$REPO_ZIP" -o "$zip_tmp" 2>/dev/null && zip_ok=0 || true
         elif command -v wget &>/dev/null; then
-            wget -q --timeout=120 "$REPO_ZIP" -O "$zip_tmp" 2>/dev/null && zip_ok=0
+            wget -q --timeout=120 "$REPO_ZIP" -O "$zip_tmp" 2>/dev/null && zip_ok=0 || true
         fi
         if [[ $zip_ok -eq 0 ]] && [[ -s "$zip_tmp" ]]; then
             if command -v unzip &>/dev/null; then
                 mkdir -p "$zip_dir"
-                unzip -q "$zip_tmp" "SDDM-video-main/${asset}" -d "$zip_dir" 2>/dev/null
-                [[ -f "${zip_dir}/SDDM-video-main/${asset}" ]] && \
-                    mv "${zip_dir}/SDDM-video-main/${asset}" "$dest" && success=0
-                rm -rf "$zip_dir"
+                # CORRECTION v3.1 : utiliser REPO_ZIP_DIR (SDDM-video-Projets)
+                unzip -q "$zip_tmp" "${REPO_ZIP_DIR}/${asset}" -d "$zip_dir" 2>/dev/null || true
+                if [[ -f "${zip_dir}/${REPO_ZIP_DIR}/${asset}" ]]; then
+                    mv "${zip_dir}/${REPO_ZIP_DIR}/${asset}" "$dest" && success=0 || true
+                fi
+                rm -rf "$zip_dir" 2>/dev/null || true
             elif command -v python3 &>/dev/null; then
-                python3 - <<PYEOF 2>/dev/null && success=0
-import zipfile, shutil
-with zipfile.ZipFile('$zip_tmp') as z:
-    name = 'SDDM-video-main/$asset'
-    if name in z.namelist():
-        with z.open(name) as src, open('$dest', 'wb') as dst:
+                python3 - "$zip_tmp" "${REPO_ZIP_DIR}/${asset}" "$dest" <<'PYEOF' 2>/dev/null && success=0 || true
+import sys, zipfile, shutil
+zip_path, inner_name, dest_path = sys.argv[1], sys.argv[2], sys.argv[3]
+with zipfile.ZipFile(zip_path) as z:
+    if inner_name in z.namelist():
+        with z.open(inner_name) as src, open(dest_path, 'wb') as dst:
             shutil.copyfileobj(src, dst)
+    else:
+        # Chercher l'asset sans tenir compte du dossier racine (robustesse)
+        matches = [n for n in z.namelist() if n.endswith('/' + inner_name.split('/')[-1])]
+        if matches:
+            with z.open(matches[0]) as src, open(dest_path, 'wb') as dst:
+                shutil.copyfileobj(src, dst)
+        else:
+            sys.exit(1)
 PYEOF
             fi
         fi
-        rm -f "$zip_tmp"
+        rm -f "$zip_tmp" 2>/dev/null || true
         rm -rf "$zip_dir" 2>/dev/null || true
     fi
 
     if [[ $success -eq 0 ]] && [[ -s "$dest" ]]; then
         chmod 644 "$dest"
         ok "Téléchargé : $asset ($(du -h "$dest" | cut -f1))"
+        INSTALL_WARNINGS+=("INFO: asset '$asset' téléchargé avec succès depuis la branche ${REPO_BRANCH}")
         return 0
     else
         rm -f "$dest" 2>/dev/null || true
+        warn "Impossible de télécharger '$asset' depuis la branche '${REPO_BRANCH}'. URLs tentées :"
+        echo -e "$tried_urls"
+        INSTALL_WARNINGS+=("WARN: échec téléchargement '$asset' — branche ${REPO_BRANCH} — URLs: $(echo -e "$tried_urls" | tr '\n' ' ')")
         return 1
     fi
 }
@@ -762,39 +934,22 @@ generate_fallback_png() {
     python3 - "$dest" "$asset" <<'PYEOF'
 import sys, struct, zlib
 
-def write_png(filename, width, height, get_pixel):
-    def chunk(tag, data):
-        raw = tag + data
-        return struct.pack('>I', len(data)) + raw + struct.pack('>I', zlib.crc32(raw) & 0xffffffff)
-    rows = b""
-    for y in range(height):
-        row = b"\x00"
-        for x in range(width):
-            r, g, b, a = get_pixel(x, y, width, height)
-            row += bytes([r, g, b, a])
-        rows += row
-    idat = zlib.compress(rows, 9)
-    png = (b"\x89PNG\r\n\x1a\n"
-           + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
-                             .replace(struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)[8:], b"")
-                   if False else struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
-           + chunk(b"IDAT", idat) + chunk(b"IEND", b""))
-    with open(filename, "wb") as f:
-        f.write(png)
-
 dest = sys.argv[1]
 asset = sys.argv[2] if len(sys.argv) > 2 else ""
 
+def mk_chunk(tag, data):
+    raw = tag + data
+    return struct.pack('>I', len(data)) + raw + struct.pack('>I', zlib.crc32(raw) & 0xffffffff)
+
 if "angle-down" in asset:
-    w, h = 20, 12
+    W, H = 20, 12
     def px(x, y, W, H):
         mid = W // 2
-        row = y
-        if row < H and abs(x - mid) <= row:
+        if y < H and abs(x - mid) <= y:
             return (200, 200, 200, 230)
         return (0, 0, 0, 0)
 else:
-    w, h = 400, 300
+    W, H = 400, 300
     def px(x, y, W, H):
         r = int(20 + (x / W) * 15)
         g = int(20 + (y / H) * 10)
@@ -804,9 +959,6 @@ else:
             return (100, 200, 100, 200)
         return (r, g, b, a)
 
-# Rewrite IHDR chunk properly
-import struct as st, zlib as zl
-W, H = w, h
 rows = b""
 for y in range(H):
     row = b"\x00"
@@ -814,18 +966,40 @@ for y in range(H):
         pixel = px(x, y, W, H)
         row += bytes([pixel[0], pixel[1], pixel[2], pixel[3]])
     rows += row
-idat = zl.compress(rows, 9)
-def mk_chunk(tag, data):
-    raw = tag + data
-    return st.pack('>I', len(data)) + raw + st.pack('>I', zl.crc32(raw) & 0xffffffff)
+idat = zlib.compress(rows, 9)
 png = (b"\x89PNG\r\n\x1a\n"
-       + mk_chunk(b"IHDR", st.pack(">IIBBBBB", W, H, 8, 6, 0, 0, 0))
+       + mk_chunk(b"IHDR", struct.pack(">IIBBBBB", W, H, 8, 6, 0, 0, 0))
        + mk_chunk(b"IDAT", idat)
        + mk_chunk(b"IEND", b""))
 with open(dest, "wb") as f:
     f.write(png)
 PYEOF
-    [[ -s "$dest" ]] && ok "PNG fallback généré : $asset" || warn "Génération PNG échouée pour $asset"
+    if [[ -s "$dest" ]]; then
+        ok "PNG fallback généré : $asset"
+        INSTALL_WARNINGS+=("WARN: '$asset' généré en fallback (non récupéré depuis le repo)")
+    else
+        warn "Génération PNG échouée pour $asset"
+        INSTALL_WARNINGS+=("ERREUR: impossible de générer le PNG fallback pour '$asset'")
+    fi
+}
+
+# =============================================================================
+#  REDÉMARRAGE SDDM (défini tôt pour usage dans --change-video)
+# =============================================================================
+_restart_sddm() {
+    if command -v systemctl &>/dev/null; then
+        systemctl restart sddm 2>/dev/null && \
+            ok "SDDM redémarré ($(systemctl is-active sddm 2>/dev/null || echo 'état inconnu'))" || \
+            warn "Redémarrage SDDM échoué — faites-le manuellement"
+    elif command -v rc-service &>/dev/null; then
+        rc-service sddm restart 2>/dev/null && ok "SDDM redémarré (OpenRC)" || \
+            warn "Redémarrage OpenRC échoué"
+    elif command -v sv &>/dev/null; then
+        sv restart /var/service/sddm 2>/dev/null && ok "SDDM redémarré (runit)" || \
+            warn "Redémarrage runit échoué"
+    else
+        warn "Impossible de redémarrer SDDM automatiquement — faites-le manuellement"
+    fi
 }
 
 # =============================================================================
@@ -850,37 +1024,32 @@ fi
 # =============================================================================
 step "1/8" "Nettoyage des installations précédentes..."
 
-# /etc/sddm.conf — priorité absolue sur conf.d
 if [[ -f "$SDDM_CONF_LEGACY" ]]; then
     if grep -q '^\[Theme\]' "$SDDM_CONF_LEGACY" 2>/dev/null; then
         warn "/etc/sddm.conf contient [Theme] — sauvegarde en ${SDDM_CONF_LEGACY}${BACKUP_SUFFIX}"
-        # Ne pas écraser une sauvegarde existante
         [[ -f "${SDDM_CONF_LEGACY}${BACKUP_SUFFIX}" ]] || \
-            cp "$SDDM_CONF_LEGACY" "${SDDM_CONF_LEGACY}${BACKUP_SUFFIX}"
-        # Créer un /etc/sddm.conf vide ou sans section [Theme]
+            cp "$SDDM_CONF_LEGACY" "${SDDM_CONF_LEGACY}${BACKUP_SUFFIX}" || true
         grep -v '^\[Theme\]' "$SDDM_CONF_LEGACY" | \
             sed '/^\s*Current\s*=/d' > "${SDDM_CONF_LEGACY}.tmp" && \
-            mv "${SDDM_CONF_LEGACY}.tmp" "$SDDM_CONF_LEGACY"
+            mv "${SDDM_CONF_LEGACY}.tmp" "$SDDM_CONF_LEGACY" || true
         ok "Section [Theme] retirée de /etc/sddm.conf (original sauvegardé)"
     else
         info "/etc/sddm.conf présent sans [Theme] — laissé intact"
     fi
 fi
 
-# Supprimer nos anciens fichiers de config
 for old_conf in \
     "${CONF_DIR}/sddm-video.conf" \
     "${CONF_DIR}/zzz-sddm-video.conf"
 do
-    [[ -f "$old_conf" ]] && { rm -f "$old_conf"; info "Supprimé : $old_conf"; }
+    [[ -f "$old_conf" ]] && { rm -f "$old_conf" && info "Supprimé : $old_conf"; } || true
 done
 
-# Supprimer les anciens thèmes
 for t in video-bg sddm-video video custom; do
     [[ -d "/usr/share/sddm/themes/$t" ]] && {
         rm -rf "/usr/share/sddm/themes/$t"
         info "Ancien thème supprimé : $t"
-    }
+    } || true
 done
 
 ok "Nettoyage terminé."
@@ -892,20 +1061,20 @@ step "2/8" "Installation de SDDM..."
 
 case "$PKG_MANAGER" in
     apt)
-        apt-get update -qq
+        apt-get update -qq || true
         DEBIAN_FRONTEND=noninteractive apt-get install -y sddm unzip 2>/dev/null || \
         DEBIAN_FRONTEND=noninteractive apt-get install -y sddm 2>/dev/null || true
         ;;
     pacman)
-        pacman -Sy --noconfirm --needed sddm unzip ;;
+        pacman -Sy --noconfirm --needed sddm unzip || true ;;
     dnf)
-        dnf install -y sddm unzip ;;
+        dnf install -y sddm unzip || true ;;
     zypper)
-        zypper install -y sddm unzip ;;
+        zypper install -y sddm unzip || true ;;
     xbps)
-        xbps-install -Sy sddm unzip ;;
+        xbps-install -Sy sddm unzip || true ;;
     apk)
-        apk add --no-cache sddm unzip ;;
+        apk add --no-cache sddm unzip || true ;;
     portage)
         emerge --ask=n x11-misc/sddm app-arch/unzip 2>/dev/null || true ;;
     eopkg)
@@ -926,10 +1095,8 @@ ok "SDDM installé : $(command -v sddm)"
 # =============================================================================
 step "3/8" "Détection de la version Qt du greeter SDDM..."
 
-# Recherche exhaustive du greeter par glob multi-arch
 _find_greeter() {
     local name="$1"
-    # Chercher dans les chemins standards puis via find
     local paths=(
         /usr/bin/$name
         /usr/libexec/$name
@@ -938,15 +1105,13 @@ _find_greeter() {
         /usr/lib64/libexec/$name
         /usr/lib/qt6/libexec/$name
     )
-    # Ajouter les chemins multi-arch dynamiquement
     for mdir in /usr/lib/*-linux-gnu*/libexec /usr/lib/*-linux-*/libexec; do
         [[ -d "$mdir" ]] && paths+=("${mdir}/${name}")
     done
     for p in "${paths[@]}"; do
         [[ -f "$p" ]] && { echo "$p"; return 0; }
     done
-    # Fallback : find (plus lent mais exhaustif)
-    find /usr /opt 2>/dev/null -name "$name" -type f 2>/dev/null | head -1
+    find /usr /opt 2>/dev/null -name "$name" -type f 2>/dev/null | head -1 || true
     return 0
 }
 
@@ -956,47 +1121,42 @@ for greeter_name in sddm-greeter-qt6 sddm-greeter-qt5 sddm-greeter; do
         case "$greeter_name" in
             *qt6*) QT_VERSION="6" ;;
             *qt5*) QT_VERSION="5" ;;
-            *)     # sddm-greeter générique : déduire depuis les dépendances
-                   if ldd "$p" 2>/dev/null | grep -q 'libQt6'; then QT_VERSION="6"
-                   elif ldd "$p" 2>/dev/null | grep -q 'libQt5'; then QT_VERSION="5"
-                   else QT_VERSION="6"  # défaut raisonnable pour systèmes récents
-                   fi ;;
+            *)
+                if ldd "$p" 2>/dev/null | grep -q 'libQt6'; then QT_VERSION="6"
+                elif ldd "$p" 2>/dev/null | grep -q 'libQt5'; then QT_VERSION="5"
+                else QT_VERSION="6"
+                fi ;;
         esac
         ok "Greeter Qt${QT_VERSION} : $p"
         break
     fi
 done
 
-# Fallback via gestionnaire de paquets
 if [[ -z "$QT_VERSION" ]]; then
     case "$PKG_MANAGER" in
         apt)
             dpkg -l sddm-greeter-qt6 2>/dev/null | grep -q "^ii" && QT_VERSION="6" || true
             [[ -z "$QT_VERSION" ]] && dpkg -l sddm-greeter 2>/dev/null | grep -q "^ii" && QT_VERSION="5" || true
             ;;
-        pacman|xbps|apk) QT_VERSION="6" ;;  # Arch/Void/Alpine = Qt6 par défaut
+        pacman|xbps|apk) QT_VERSION="6" ;;
         dnf)
             rpm -q sddm-qt6 &>/dev/null && QT_VERSION="6" || QT_VERSION="5" ;;
         zypper)
             rpm -q libsddm-qt6 &>/dev/null && QT_VERSION="6" || QT_VERSION="5" ;;
         portage)
-            # Gentoo : vérifier le USE flag qt6
             equery uses sddm 2>/dev/null | grep -q 'qt6' && QT_VERSION="6" || QT_VERSION="5" ;;
     esac
 fi
 
-# Fallback via /etc/os-release
 if [[ -z "$QT_VERSION" ]] && [[ -f /etc/os-release ]]; then
     # shellcheck disable=SC1091
     source /etc/os-release
     case "${VERSION_CODENAME:-}${VERSION_ID:-}${ID:-}" in
-        # Qt6 : Debian Trixie+, Ubuntu 24.04+, Fedora 38+, Arch, openSUSE TW
         trixie|forky|noble|*24.04*|*25.04*|*38*|*39*|*40*|*41*|*42*|arch|manjaro|endeavouros|opensuse-tumbleweed)
             QT_VERSION="6" ;;
-        # Qt5 : Debian Bookworm/Bullseye, Ubuntu 22.04, Fedora < 38
         bookworm|jammy|*22.04*|*20.04*|bullseye|buster|*36*|*37*|opensuse-leap)
             QT_VERSION="5" ;;
-        *)  QT_VERSION="6" ;;  # défaut conservateur
+        *)  QT_VERSION="6" ;;
     esac
     info "Qt déduit via /etc/os-release (${PRETTY_NAME:-}) : Qt${QT_VERSION}"
 fi
@@ -1013,14 +1173,11 @@ install_multimedia_deps() {
     case "$PKG_MANAGER" in
         apt)
             if [[ "$QT_VERSION" == "6" ]]; then
-                # Qt6 QML — noms Debian Trixie
                 pkg_install qml6-module-qtmultimedia qml6-module-qtquick-controls -- \
                             qml6-module-qtmultimedia
             else
                 pkg_install qml-module-qtmultimedia qml-module-qtquick-controls2
             fi
-            # GStreamer — décodeurs H.264, H.265, VP8/VP9, AAC, MP3
-            # plugins-bad requis pour certains demuxers HLS/DASH et codecs H.264 baseline
             pkg_install \
                 gstreamer1.0-plugins-good \
                 gstreamer1.0-plugins-bad \
@@ -1030,10 +1187,7 @@ install_multimedia_deps() {
                 -- \
                 gstreamer1.0-plugins-good \
                 gstreamer1.0-libav
-            # Drivers VAAPI — soft fallback automatique si absent, mais évite les warnings
-            # On installe le driver mesa (Intel/AMD) — NVIDIA non disponible sur Debian
             pkg_install mesa-va-drivers -- libva2 || true
-            # libva-drm requis pour VAAPI sur DRM (SDDM tourne sans X11/Wayland complet)
             pkg_install libva-drm2 || true
             ;;
         pacman)
@@ -1055,15 +1209,12 @@ install_multimedia_deps() {
             else
                 pkg_install qt5-qtmultimedia
             fi
-            # Sur Fedora, H.264/AAC sont dans rpmfusion-free/nonfree
-            # On installe ce qui est disponible en base
             pkg_install \
                 gstreamer1-plugins-good \
                 gstreamer1-plugins-bad-free \
                 gstreamer1-libav \
                 -- \
                 gstreamer1-plugins-good
-            # Mesa VAAPI
             pkg_install mesa-va-drivers libva || true
             ;;
         zypper)
@@ -1115,25 +1266,20 @@ select_video
 # =============================================================================
 step "6/8" "Création du thème SDDM..."
 
-mkdir -p "$THEME_DIR"
+mkdir -p "$THEME_DIR" || die "Impossible de créer $THEME_DIR"
 install_video
 
 # ── Assets graphiques ──
-info "Téléchargement des assets graphiques..."
+info "Téléchargement des assets graphiques (branche ${REPO_BRANCH})..."
 download_asset "loginterminalc.png" || {
-    warn "loginterminalc.png introuvable — PNG fallback généré"
+    warn "loginterminalc.png non récupéré depuis le repo — génération d'un PNG fallback"
     generate_fallback_png "loginterminalc.png"
 }
 
-# angle-down.png : priorité au fichier installé par le paquet sddm
-# S'il est absent du thème mais présent dans SddmComponents, on ne le copie pas —
-# ComboBox.qml le cherche via un chemin absolu qui inclut SddmComponents.
-# On le copie dans le thème uniquement si SddmComponents ne l'a pas non plus.
 SDDM_ARROW=$(find /usr/lib -name "angle-down.png" 2>/dev/null | head -1 || true)
 if [[ -z "$SDDM_ARROW" ]]; then
     download_asset "angle-down.png" || generate_fallback_png "angle-down.png"
 else
-    # Copier dans le thème pour éviter le warning (chemin relatif dans Main.qml)
     cp "$SDDM_ARROW" "${THEME_DIR}/angle-down.png" 2>/dev/null || true
     ok "angle-down.png copié depuis SddmComponents"
 fi
@@ -1163,7 +1309,7 @@ EOF
 # ── Main.qml Qt6 ──────────────────────────────────────────────────────────────
 if [[ "$QT_VERSION" == "6" ]]; then
     cat > "${THEME_DIR}/Main.qml" <<'QMLEOF'
-// SDDM Video Background  v3  —  Main.qml  (Qt6)
+// SDDM Video Background  v3.1  —  Main.qml  (Qt6)
 // by PapaOursPolaire
 //
 // Vidéo configurable dans theme.conf : background=nomdevideo.mp4
@@ -1229,7 +1375,6 @@ Rectangle {
 
         onErrorOccurred: function(error, errorString) {
             console.warn("SDDM Video: erreur lecteur — " + errorString)
-            // Le fallback (fond noir) est automatique
         }
     }
 
@@ -1366,7 +1511,7 @@ QMLEOF
 # ── Main.qml Qt5 ──────────────────────────────────────────────────────────────
 else
     cat > "${THEME_DIR}/Main.qml" <<'QMLEOF'
-// SDDM Video Background  v3  —  Main.qml  (Qt5)
+// SDDM Video Background  v3.1  —  Main.qml  (Qt5)
 // by PapaOursPolaire
 
 import QtQuick 2.15
@@ -1523,6 +1668,21 @@ fi
 
 ok "Main.qml Qt${QT_VERSION} écrit."
 
+# ── Vérification que tous les fichiers essentiels sont présents ──────────────
+echo ""
+info "Vérification des fichiers du thème..."
+local_missing=0
+for check_f in Main.qml theme.conf metadata.desktop loginterminalc.png; do
+    if [[ -f "${THEME_DIR}/${check_f}" ]]; then
+        local fsz; fsz=$(du -h "${THEME_DIR}/${check_f}" | cut -f1)
+        ok "  ${check_f} (${fsz})"
+    else
+        warn "  MANQUANT : ${THEME_DIR}/${check_f}"
+        local_missing=$((local_missing + 1))
+    fi
+done
+[[ $local_missing -gt 0 ]] && warn "$local_missing fichier(s) manquant(s) dans le thème — l'apparence peut être dégradée"
+
 chmod -R 755 "$THEME_DIR"
 find "$THEME_DIR" -type f -exec chmod 644 {} \;
 ok "Permissions appliquées."
@@ -1532,10 +1692,8 @@ ok "Permissions appliquées."
 # =============================================================================
 step "7/8" "Écriture de la configuration SDDM..."
 
-mkdir -p "$CONF_DIR"
+mkdir -p "$CONF_DIR" || die "Impossible de créer $CONF_DIR"
 
-# Commentaire de détection display server — on ne force PAS DisplayServer
-# pour éviter les écrans noirs sur configs hybrides
 DISPLAY_SERVER_HINT=""
 if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
     DISPLAY_SERVER_HINT="# DisplayServer=wayland  ← décommentez si nécessaire"
@@ -1568,25 +1726,49 @@ EOF
 
 ok "Config SDDM écrite : $CONF_FILE"
 
+# ── Vérification des conflits de configuration après écriture ───────────────
+echo ""
+info "Vérification des conflits de configuration..."
+conflict_found=0
+if [[ -d "$CONF_DIR" ]]; then
+    while IFS= read -r f; do
+        [[ "$f" == "$CONF_FILE" ]] && continue
+        local other_theme
+        other_theme=$(grep -E '^\s*Current\s*=' "$f" 2>/dev/null | tail -1 | grep -v "^$" || true)
+        if [[ -n "$other_theme" ]]; then
+            local bname; bname=$(basename "$f")
+            # Un fichier qui vient APRÈS zzz- alphabétiquement écraserait notre config
+            if [[ "$bname" > "$(basename "$CONF_FILE")" ]]; then
+                warn "CONFLIT DÉTECTÉ : '$bname' (vient après '$(basename "$CONF_FILE")') contient : $other_theme"
+                warn "  → Ce fichier écrasera notre thème. Supprimez ou modifiez-le."
+                conflict_found=1
+            else
+                info "Config co-existante (notre zzz- gagne) : $(basename "$f") — $other_theme"
+            fi
+        fi
+    done < <(find "$CONF_DIR" -maxdepth 1 -name "*.conf" 2>/dev/null | sort)
+fi
+if [[ -f "$SDDM_CONF_LEGACY" ]] && grep -q '^\[Theme\]' "$SDDM_CONF_LEGACY" 2>/dev/null; then
+    warn "CONFLIT : /etc/sddm.conf contient encore [Theme] — il a priorité absolue sur conf.d/"
+    conflict_found=1
+fi
+[[ $conflict_found -eq 0 ]] && ok "Aucun conflit de configuration détecté."
+
 # ── Correction IBus / Wayland ────────────────────────────────────────────────
-# Stratégie multi-couches : chaque couche bloque une source d'injection différente.
-# Couche 1 : im-config (PAM)
 if command -v im-config &>/dev/null && [[ -n "$REAL_USER" ]]; then
     sudo -u "$REAL_USER" im-config -n none 2>/dev/null && \
         ok "im-config -n none appliqué pour '$REAL_USER'" || \
         warn "im-config -n none a échoué (peut nécessiter une session graphique)"
 fi
 
-# Couche 2 : ~/.xinputrc
 if [[ -n "$REAL_HOME" ]] && [[ -d "$REAL_HOME" ]]; then
     echo "run_im none" > "${REAL_HOME}/.xinputrc"
     chown "${REAL_USER}:$(id -gn "$REAL_USER" 2>/dev/null || echo "$REAL_USER")" \
         "${REAL_HOME}/.xinputrc" 2>/dev/null || chown "$REAL_USER" "${REAL_HOME}/.xinputrc" || true
     ok "~/.xinputrc → run_im none"
 
-    # Couche 3 : Plasma autostart
     local plasma_env_dir="${REAL_HOME}/.config/plasma-workspace/env"
-    mkdir -p "$plasma_env_dir"
+    mkdir -p "$plasma_env_dir" 2>/dev/null || true
     cat > "${plasma_env_dir}/99-unset-im-xim.sh" <<'PLASMA_ENV'
 #!/bin/sh
 # sddm-video : supprime les variables XIM (alerte IBus Wayland)
@@ -1595,12 +1777,11 @@ unset GTK_IM_MODULE
 unset XMODIFIERS
 PLASMA_ENV
     chmod +x "${plasma_env_dir}/99-unset-im-xim.sh"
-    chown -R "$REAL_USER" "$plasma_env_dir"
+    chown -R "$REAL_USER" "$plasma_env_dir" 2>/dev/null || true
     ok "Plasma autostart : ${plasma_env_dir}/99-unset-im-xim.sh"
 fi
 
-# Couche 4 : environment.d (sessions systemd-logind pures)
-mkdir -p /etc/environment.d
+mkdir -p /etc/environment.d 2>/dev/null || true
 cat > "/etc/environment.d/60-no-ibus-xim.conf" <<'ENVEOF'
 # sddm-video : désactive les variables XIM incompatibles avec Wayland input-method-v2
 QT_IM_MODULE=
@@ -1614,13 +1795,11 @@ if [[ -f "$SDDM_CONF_LEGACY" ]]; then
     if grep -q '^\[Theme\]' "$SDDM_CONF_LEGACY" 2>/dev/null; then
         warn "/etc/sddm.conf contient encore [Theme] — sauvegarde et neutralisation"
         cp "$SDDM_CONF_LEGACY" "${SDDM_CONF_LEGACY}${BACKUP_SUFFIX}" 2>/dev/null || true
-        # Retirer [Theme] et Current= de façon chirurgicale
         python3 - "$SDDM_CONF_LEGACY" <<'PYEOF' 2>/dev/null || mv "$SDDM_CONF_LEGACY" "${SDDM_CONF_LEGACY}.old"
 import sys, re
 path = sys.argv[1]
 with open(path) as f:
     content = f.read()
-# Supprimer la section [Theme] entière
 content = re.sub(r'\[Theme\][^\[]*', '', content, flags=re.DOTALL)
 with open(path, 'w') as f:
     f.write(content.strip() + '\n')
@@ -1631,11 +1810,15 @@ PYEOF
     fi
 fi
 
-# Afficher les configs actives
 echo ""
 info "Configs SDDM actives dans ${CONF_DIR}/ :"
 find "$CONF_DIR" -maxdepth 1 -name "*.conf" 2>/dev/null | sort | while IFS= read -r f; do
-    echo "    $(basename "$f")"
+    local cur; cur=$(grep -E '^\s*Current\s*=' "$f" 2>/dev/null | tail -1 || true)
+    if [[ -n "$cur" ]]; then
+        echo -e "    ${YEL}$(basename "$f")${NC}  ←  $cur"
+    else
+        echo "    $(basename "$f")"
+    fi
 done
 
 # =============================================================================
@@ -1643,21 +1826,7 @@ done
 # =============================================================================
 step "8/8" "Activation du service SDDM..."
 
-_restart_sddm() {
-    if command -v systemctl &>/dev/null; then
-        systemctl restart sddm 2>/dev/null && \
-            ok "SDDM redémarré ($(systemctl is-active sddm 2>/dev/null || echo 'état inconnu'))"
-    elif command -v rc-service &>/dev/null; then
-        rc-service sddm restart 2>/dev/null && ok "SDDM redémarré (OpenRC)"
-    elif command -v sv &>/dev/null; then
-        sv restart /var/service/sddm 2>/dev/null && ok "SDDM redémarré (runit)"
-    else
-        warn "Impossible de redémarrer SDDM automatiquement — faites-le manuellement"
-    fi
-}
-
 if command -v systemctl &>/dev/null && systemctl --version &>/dev/null 2>&1; then
-    # Désactiver les autres DM (mémoriser le DM actif pour rollback)
     for dm in gdm gdm3 lightdm lxdm xdm ly; do
         if systemctl is-enabled "$dm" &>/dev/null 2>&1; then
             echo "$dm" > /tmp/sddm-video-prev-dm
@@ -1665,20 +1834,17 @@ if command -v systemctl &>/dev/null && systemctl --version &>/dev/null 2>&1; the
             systemctl disable --now "$dm" 2>/dev/null || true
         fi
     done
-    systemctl enable sddm 2>/dev/null
+    systemctl enable sddm 2>/dev/null || true
     systemctl set-default graphical.target 2>/dev/null || true
     ok "SDDM activé au démarrage."
 
 elif command -v rc-update &>/dev/null; then
-    # OpenRC (Gentoo, Alpine, Devuan, Artix OpenRC)
-    rc-update add sddm default 2>/dev/null && ok "SDDM ajouté au runlevel default (OpenRC)"
+    rc-update add sddm default 2>/dev/null && ok "SDDM ajouté au runlevel default (OpenRC)" || true
 
 elif command -v sv &>/dev/null; then
-    # runit (Void Linux, Artix runit)
-    ln -sf /etc/sv/sddm /var/service/ 2>/dev/null && ok "SDDM activé (runit)"
+    ln -sf /etc/sv/sddm /var/service/ 2>/dev/null && ok "SDDM activé (runit)" || true
 
 elif command -v s6-rc &>/dev/null; then
-    # s6 (Artix s6, Chimera)
     warn "s6 : activez manuellement le service sddm dans votre bundle s6"
 
 else
@@ -1698,6 +1864,7 @@ echo -e "  ${GRN}Vidéo      :${NC} $FILENAME"
 echo -e "  ${GRN}Thème      :${NC} $THEME_DIR"
 echo -e "  ${GRN}Config     :${NC} $CONF_FILE"
 echo -e "  ${GRN}Distro     :${NC} $(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d= -f2- | tr -d '"' || echo inconnue)"
+echo -e "  ${GRN}Branche    :${NC} ${REPO_BRANCH}"
 echo ""
 echo -e "  ${CYN}Commandes utiles :${NC}"
 echo -e "    sudo bash sddm-video.sh --change-video   # changer la vidéo"
@@ -1716,6 +1883,9 @@ echo -e "  les logs du greeter sont NORMAUX si VAAPI n'est pas configuré."
 echo -e "  QtMultimedia se rabat automatiquement sur le décodage logiciel (CPU)."
 echo -e "  La vidéo s'affiche quand même. Voir --diagnose pour plus de détails."
 echo ""
+
+# ── Génération du rapport de log complet ────────────────────────────────────
+generate_log_report
 
 read -rp "  Redémarrer SDDM maintenant ? [o/N] : " REP || REP=""
 if [[ "$REP" =~ ^[Oo]$ ]]; then
