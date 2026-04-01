@@ -1,0 +1,196 @@
+============================================================
+  SDDM Video v3.3 — Rapport d'installation
+  Généré le  : 2026-04-01 21:39:01
+  Repo local : /home/papaours/SDDM-video
+============================================================
+
+── Système ──────────────────────────────────────────────────
+OS      : Debian GNU/Linux 13 (trixie)
+Kernel  : Linux papaours 6.12.74+deb13+1-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.12.74-2 (2026-03-08) x86_64 GNU/Linux
+PKG MGR : apt
+Qt ver  : 6
+Vidéo   : background.mp4
+
+── Fichiers présents dans le repo local (/home/papaours/SDDM-video/) ────
+total 61M
+drwxrwxr-x  3 papaours papaours 4,0K  1 avr 21:38 .
+drwx-----x 21 papaours papaours 4,0K  1 avr 21:38 ..
+-rw-rw-r--  1 papaours papaours  61M  1 avr 21:38 default.mp4
+drwxrwxr-x  8 papaours papaours 4,0K  1 avr 21:38 .git
+-rw-rw-r--  1 papaours papaours 8,1K  1 avr 21:38 log
+-rw-rw-r--  1 papaours papaours 136K  1 avr 21:38 loginterminalc.png
+-rw-rw-r--  1 papaours papaours  14K  1 avr 21:38 Main.qml
+-rw-rw-r--  1 papaours papaours  241  1 avr 21:38 metadata.desktop
+-rw-rw-r--  1 papaours papaours 6,5K  1 avr 21:38 README.md
+-rw-rw-r--  1 papaours papaours  60K  1 avr 21:38 sddm-video.sh
+-rw-rw-r--  1 papaours papaours   45  1 avr 21:38 theme.conf
+-rw-rw-r--  1 papaours papaours   21  1 avr 21:38 theme.conf.user
+
+── Fichiers installés dans le thème ─────────────────────────
+total 61M
+drwxr-xr-x  2 root root 4,0K  1 avr 21:38 .
+drwxr-xr-x 11 root root 4,0K  1 avr 21:38 ..
+-rw-r--r--  1 root root  61M  1 avr 21:38 background.mp4
+-rw-r--r--  1 root root 136K  1 avr 21:38 loginterminalc.png
+-rw-r--r--  1 root root 6,1K  1 avr 21:38 Main.qml
+-rw-r--r--  1 root root  309  1 avr 21:38 metadata.desktop
+-rw-r--r--  1 root root   36  1 avr 21:38 theme.conf
+-rw-r--r--  1 root root   91  1 avr 21:38 theme.conf.user
+
+── theme.conf ───────────────────────────────────────────────
+[General]
+background=background.mp4
+
+── metadata.desktop ─────────────────────────────────────────
+[Desktop Entry]
+Name=SDDM Video Background
+Comment=Fond vidéo configurable pour SDDM — PapaOursPolaire
+Type=Service
+X-KDE-PluginInfo-Name=sddm-video
+X-KDE-PluginInfo-Author=PapaOursPolaire
+X-KDE-PluginInfo-Email=papaoursgamer@gmail.com
+X-KDE-PluginInfo-Version=3.3
+X-KDE-PluginInfo-License=GPL
+QtVersion=6
+
+── /etc/sddm.conf.d/zzz-sddm-video.conf ─────────────────────────────────────────────
+# Configuration SDDM — sddm-video v3.3 — PapaOursPolaire
+# Généré le 2026-04-01 21:38:58
+#
+# Changer la vidéo : sudo bash sddm-video.sh --change-video
+# Diagnostic       : bash sddm-video.sh --diagnose
+
+[General]
+Numlock=on
+# DisplayServer=x11  ← décommentez si nécessaire
+InputMethod=
+
+[Theme]
+Current=sddm-video
+
+[Users]
+MinimumUid=1000
+MaximumUid=60000
+
+── Tous les .conf dans /etc/sddm.conf.d/ ─────────────────────────
+--- fallout-theme.conf ---
+# Thème SDDM Fallout 3
+# Géré par sddm-fallout-debian.sh
+# Pour rollback : sudo bash sddm-fallout-debian.sh --rollback
+[Theme]
+Current=fallout3
+
+--- kde_settings.conf ---
+[Autologin]
+Relogin=false
+Session=
+User=
+
+[General]
+HaltCommand=
+RebootCommand=
+
+[Theme]
+Current=debian-breeze
+
+[Users]
+MaximumUid=60000
+MinimumUid=1000
+
+--- zzz-sddm-video.conf ---
+# Configuration SDDM — sddm-video v3.3 — PapaOursPolaire
+# Généré le 2026-04-01 21:38:58
+#
+# Changer la vidéo : sudo bash sddm-video.sh --change-video
+# Diagnostic       : bash sddm-video.sh --diagnose
+
+[General]
+Numlock=on
+# DisplayServer=x11  ← décommentez si nécessaire
+InputMethod=
+
+[Theme]
+Current=sddm-video
+
+[Users]
+MinimumUid=1000
+MaximumUid=60000
+
+── /etc/sddm.conf (legacy) ──────────────────────────────────
+
+── Service SDDM ─────────────────────────────────────────────
+is-active  : active
+is-enabled : enabled
+
+── Greeter SDDM ─────────────────────────────────────────────
+/usr/share/man/man1/sddm-greeter.1.gz
+/usr/bin/sddm-greeter-qt6
+
+── Modules QtMultimedia QML ─────────────────────────────────
+/usr/lib/x86_64-linux-gnu/qt6/qml/QtMultimedia
+/usr/lib/x86_64-linux-gnu/qt5/qml/QtMultimedia
+
+── Journalctl SDDM (50 dernières lignes) ────────────────────
+avr 01 21:37:25 papaours sddm[23417]: Display server starting...
+avr 01 21:37:25 papaours sddm[23417]: Writing cookie to "/run/sddm/xauth_DEwBVk"
+avr 01 21:37:25 papaours sddm[23417]: Running: /usr/bin/X -nolisten tcp -background none -seat seat0 vt2 -auth /run/sddm/xauth_DEwBVk -noreset -displayfd 16
+avr 01 21:37:26 papaours sddm[23417]: Setting default cursor
+avr 01 21:37:26 papaours sddm[23417]: Running display setup script  "/usr/share/sddm/scripts/Xsetup"
+avr 01 21:37:26 papaours sddm[23417]: Display server started.
+avr 01 21:37:26 papaours sddm[23417]: Socket server starting...
+avr 01 21:37:26 papaours sddm[23417]: Socket server started.
+avr 01 21:37:26 papaours sddm[23417]: Loading theme configuration from "/usr/share/sddm/themes/sddm-video/theme.conf"
+avr 01 21:37:26 papaours sddm[23417]: The theme at "/usr/share/sddm/themes/sddm-video" requires missing "/usr/bin/sddm-greeter" . Using fallback theme.
+avr 01 21:37:26 papaours sddm[23417]: Loaded empty theme configuration
+avr 01 21:37:26 papaours sddm[23417]: Greeter starting...
+avr 01 21:37:26 papaours sddm[23535]: Detected locale "C" with character encoding "ANSI_X3.4-1968", which is not UTF-8.
+avr 01 21:37:26 papaours sddm[23535]: Qt depends on a UTF-8 locale, and has switched to "C.UTF-8" instead.
+avr 01 21:37:26 papaours sddm[23535]: If this causes problems, reconfigure your locale. See the locale(1) manual
+avr 01 21:37:26 papaours sddm[23535]: for more information.
+avr 01 21:37:26 papaours sddm-helper[23535]: [PAM] Starting...
+avr 01 21:37:26 papaours sddm-helper[23535]: [PAM] Authenticating...
+avr 01 21:37:26 papaours sddm-helper[23535]: [PAM] returning.
+avr 01 21:37:26 papaours sddm-helper[23535]: pam_unix(sddm-greeter:session): session opened for user sddm(uid=106) by sddm(uid=0)
+avr 01 21:37:26 papaours sddm-helper[23535]: Writing cookie to "/tmp/xauth_NlHvjp"
+avr 01 21:37:26 papaours sddm-helper[23535]: Starting X11 session: "" "/usr/bin/sddm-greeter-qt6 --socket /tmp/sddm-:0-ifPRYc"
+avr 01 21:37:26 papaours sddm[23417]: Greeter session started successfully
+avr 01 21:37:27 papaours sddm[23417]: Message received from greeter: Connect
+avr 01 21:37:31 papaours sddm[23417]: Message received from greeter: Login
+avr 01 21:37:31 papaours sddm[23417]: Reading from "/usr/share/wayland-sessions/plasma.desktop"
+avr 01 21:37:31 papaours sddm[23417]: Session "/usr/share/wayland-sessions/plasma.desktop" selected, command: "/usr/lib/x86_64-linux-gnu/libexec/plasma-dbus-run-session-if-needed /usr/bin/startplasma-wayland" for VT 1
+avr 01 21:37:31 papaours sddm[23682]: Detected locale "C" with character encoding "ANSI_X3.4-1968", which is not UTF-8.
+avr 01 21:37:31 papaours sddm[23682]: Qt depends on a UTF-8 locale, and has switched to "C.UTF-8" instead.
+avr 01 21:37:31 papaours sddm[23682]: If this causes problems, reconfigure your locale. See the locale(1) manual
+avr 01 21:37:31 papaours sddm[23682]: for more information.
+avr 01 21:37:31 papaours sddm-helper[23682]: [PAM] Starting...
+avr 01 21:37:31 papaours sddm-helper[23682]: [PAM] Authenticating...
+avr 01 21:37:31 papaours sddm-helper[23682]: [PAM] Preparing to converse...
+avr 01 21:37:31 papaours sddm-helper[23682]: [PAM] Conversation with 1 messages
+avr 01 21:37:31 papaours sddm-helper[23682]: gkr-pam: unable to locate daemon control file
+avr 01 21:37:31 papaours sddm-helper[23682]: gkr-pam: stashed password to try later in open session
+avr 01 21:37:31 papaours sddm-helper[23682]: [PAM] returning.
+avr 01 21:37:31 papaours sddm-helper[23682]: pam_kwallet5(sddm:auth): pam_kwallet5: pam_sm_authenticate
+avr 01 21:37:31 papaours sddm[23417]: Authentication for user  "papaours"  successful
+avr 01 21:37:31 papaours sddm-helper[23682]: pam_kwallet5(sddm:setcred): pam_kwallet5: pam_sm_setcred
+avr 01 21:37:31 papaours sddm-helper[23682]: pam_unix(sddm:session): session opened for user papaours(uid=1000) by papaours(uid=0)
+avr 01 21:37:31 papaours sddm-helper[23682]: gkr-pam: unlocked login keyring
+avr 01 21:37:31 papaours sddm-helper[23682]: pam_kwallet5(sddm:session): pam_kwallet5: pam_sm_open_session
+avr 01 21:37:31 papaours sddm[23417]: Auth: sddm-helper exited successfully
+avr 01 21:37:31 papaours sddm[23417]: Greeter stopped. SDDM::Auth::HELPER_SUCCESS
+avr 01 21:37:31 papaours sddm-helper[23682]: pam_env(sddm:session): deprecated reading of user environment enabled
+avr 01 21:37:31 papaours sddm-helper[23682]: Starting Wayland user session: "/etc/sddm/wayland-session" "/usr/lib/x86_64-linux-gnu/libexec/plasma-dbus-run-session-if-needed /usr/bin/startplasma-wayland"
+avr 01 21:37:31 papaours sddm[23417]: Session started true
+avr 01 21:37:31 papaours sddm-helper[23682]: Failed to write utmpx:  No such file or directory
+
+── Variables d'environnement ────────────────────────────────
+QT_IM_MODULE   : <vide>
+GTK_IM_MODULE  : <vide>
+WAYLAND_DISPLAY: <vide>
+DISPLAY        : :1
+
+── Warnings et erreurs collectés ────────────────────────────
+  WARN: im-config -n none a échoué (nécessite peut-être une session graphique)
+
+============================================================
+  Fin du rapport
+============================================================
