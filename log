@@ -1,8 +1,35 @@
-papaours@papaours:~$ sudo rm -rf /var/lib/caddy/.local/share/caddy/certificates/
-[sudo] Mot de passe de papaours : 
-papaours@papaours:~$ sudo rm -rf /var/lib/caddy/.local/share/caddy/certificates/
-papaours@papaours:~$ sudo systemctl reload caddy
-Job for caddy.service failed.
-See "systemctl status caddy.service" and "journalctl -xeu caddy.service" for details.
-papaours@papaours:~$ 
+grizzlyrics.duckdns.org {
+    root * /var/www/nextcloud
+    php_fastcgi unix//run/php/php8.4-fpm.sock
+    file_server
+}
 
+grizzly-stream.duckdns.org {
+
+    # WoL script sur /wol
+    handle_path /wol* {
+        reverse_proxy 127.0.0.1:8080
+    }
+
+    # Jellyfin sur la racine
+    handle_path /* {
+        reverse_proxy 127.0.0.1:8096
+    }
+
+    # Optionnel : logs
+    log {
+        output file /var/log/caddy/access.log
+    }
+}
+
+beartify.duckdns.org {
+    root * /var/www/html/player
+    file_server
+    encode gzip
+
+    # Headers de sécurité (optionnels)
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "SAMEORIGIN"
+    }
+}
