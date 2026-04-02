@@ -1,9 +1,30 @@
-export DuckDNS_Token="cc3349a0-e9a1-47aa-bf6b-483a9a9ab5ae"
+papaours@papaours:~$ export DuckDNS_Token="cc3349a0-e9a1-47aa-bf6b-483a9a9ab5ae"
 
 acme.sh --issue --dns dns_duckdns -d beartify.duckdns.org
 acme.sh --issue --dns dns_duckdns -d grizzlyrics.duckdns.org
 acme.sh --issue --dns dns_duckdns -d grizzly-stream.duckdns.org
-
-curl https://get.acme.sh | sh
-
-source ~/.bashrc
+[jeu 02 avr 2026 22:41:15 CEST] Using CA: https://acme.zerossl.com/v2/DV90
+[jeu 02 avr 2026 22:41:15 CEST] No EAB credentials found for ZeroSSL, let's obtain them
+[jeu 02 avr 2026 22:41:15 CEST] acme.sh is using ZeroSSL as default CA now.
+[jeu 02 avr 2026 22:41:15 CEST] Please update your account with an email address first.
+[jeu 02 avr 2026 22:41:15 CEST] acme.sh --register-account -m my@example.com
+[jeu 02 avr 2026 22:41:15 CEST] See: https://github.com/acmesh-official/acme.sh/wiki/ZeroSSL.com-CA
+[jeu 02 avr 2026 22:41:15 CEST] Please add '--debug' or '--log' to see more information.
+[jeu 02 avr 2026 22:41:15 CEST] See: https://github.com/acmesh-official/acme.sh/wiki/How-to-debug-acme.sh
+[jeu 02 avr 2026 22:41:15 CEST] Using CA: https://acme.zerossl.com/v2/DV90
+[jeu 02 avr 2026 22:41:15 CEST] No EAB credentials found for ZeroSSL, let's obtain them
+[jeu 02 avr 2026 22:41:15 CEST] acme.sh is using ZeroSSL as default CA now.
+[jeu 02 avr 2026 22:41:15 CEST] Please update your account with an email address first.
+[jeu 02 avr 2026 22:41:15 CEST] acme.sh --register-account -m my@example.com
+[jeu 02 avr 2026 22:41:15 CEST] See: https://github.com/acmesh-official/acme.sh/wiki/ZeroSSL.com-CA
+[jeu 02 avr 2026 22:41:15 CEST] Please add '--debug' or '--log' to see more information.
+[jeu 02 avr 2026 22:41:15 CEST] See: https://github.com/acmesh-official/acme.sh/wiki/How-to-debug-acme.sh
+[jeu 02 avr 2026 22:41:16 CEST] Using CA: https://acme.zerossl.com/v2/DV90
+[jeu 02 avr 2026 22:41:16 CEST] No EAB credentials found for ZeroSSL, let's obtain them
+[jeu 02 avr 2026 22:41:16 CEST] acme.sh is using ZeroSSL as default CA now.
+[jeu 02 avr 2026 22:41:16 CEST] Please update your account with an email address first.
+[jeu 02 avr 2026 22:41:16 CEST] acme.sh --register-account -m my@example.com
+[jeu 02 avr 2026 22:41:16 CEST] See: https://github.com/acmesh-official/acme.sh/wiki/ZeroSSL.com-CA
+[jeu 02 avr 2026 22:41:16 CEST] Please add '--debug' or '--log' to see more information.
+[jeu 02 avr 2026 22:41:16 CEST] See: https://github.com/acmesh-official/acme.sh/wiki/How-to-debug-acme.sh
+papaours@papaours:~$ 
