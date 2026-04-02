@@ -1,3 +1,8 @@
-sudo rm -rf /var/lib/caddy/.local/share/caddy/certificates/
+papaours@papaours:~$ sudo rm -rf /var/lib/caddy/.local/share/caddy/certificates/
+[sudo] Mot de passe de papaours : 
+papaours@papaours:~$ sudo rm -rf /var/lib/caddy/.local/share/caddy/certificates/
+papaours@papaours:~$ sudo systemctl reload caddy
+Job for caddy.service failed.
+See "systemctl status caddy.service" and "journalctl -xeu caddy.service" for details.
+papaours@papaours:~$ 
 
-sudo systemctl reload caddy
