@@ -3,3 +3,7 @@ export DuckDNS_Token="cc3349a0-e9a1-47aa-bf6b-483a9a9ab5ae"
 acme.sh --issue --dns dns_duckdns -d beartify.duckdns.org
 acme.sh --issue --dns dns_duckdns -d grizzlyrics.duckdns.org
 acme.sh --issue --dns dns_duckdns -d grizzly-stream.duckdns.org
+
+curl https://get.acme.sh | sh
+
+source ~/.bashrc
