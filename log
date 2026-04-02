@@ -1,116 +1,97 @@
-papaours@papaours:~$ # Vérifier les logs SDDM
-journalctl -u sddm -b --no-pager
+Installer Nextcloud pour streamer ou traiter des fichiers spécifiques (comme des fichiers JSON ou des paroles LRC) demande une petite gymnastique, car Nextcloud est avant tout une plateforme de stockage et non un serveur de streaming brut.
 
-# Tester le thème en mode test
-sddm-greeter-qt6 --test-mode --theme /usr/share/sddm/themes/sddm-video
-Hint: You are currently not seeing messages from other users and the system.
-      Users in groups 'adm', 'systemd-journal' can see all messages.
-      Pass -q to turn off this notice.
--- No entries --
-High-DPI autoscaling Enabled
-Reading from "/usr/local/share/wayland-sessions/plasma.desktop"
-Reading from "/usr/share/wayland-sessions/plasma.desktop"
-Reading from "/usr/local/share/xsessions/plasmax11.desktop"
-Reading from "/usr/share/xsessions/plasmax11.desktop"
-Loading theme configuration from "/usr/share/sddm/themes/sddm-video/theme.conf"
-Socket error:  "QLocalSocket::connectToServer : Nom invalide"
-Loading file:///usr/share/sddm/themes/sddm-video/Main.qml...
-qt.multimedia.ffmpeg: Using Qt multimedia with FFmpeg version 7.1.3-0+deb13u1 GPL version 2 or later
-qt.multimedia.ffmpeg: Available HW decoding frameworks:
-Failed to open VDPAU backend libvdpau_nvidia.so: Ne peut ouvrir le fichier d'objet partagé: Aucun fichier ou dossier de ce nom
-qt.multimedia.ffmpeg:      vaapi
-qt.multimedia.ffmpeg:      vulkan
-qt.multimedia.ffmpeg: Available HW encoding frameworks:
-qt.multimedia.ffmpeg:      vaapi
-qt.multimedia.ffmpeg:      vulkan
-Both point size and pixel size set. Using pixel size.
-Both point size and pixel size set. Using pixel size.
-file:///usr/lib/x86_64-linux-gnu/qt6/qml/SddmComponents/ComboBox.qml:107:9: QML Image: Cannot open: file:///usr/lib/x86_64-linux-gnu/qt6/qml/SddmComponents/angle-down.png
-file:///usr/lib/x86_64-linux-gnu/qt6/qml/SddmComponents/ComboBox.qml:107:9: QML Image: Cannot open: file:///usr/lib/x86_64-linux-gnu/qt6/qml/SddmComponents/angle-down.png
-Adding view for "DP-1" QRect(0,0 1920x1080)
-[aac @ 0x558bb3323800] Could not update timestamps for skipped samples.
-[h264 @ 0x558bb4bcf880] Failed to upload decode parameters: 2 (resource allocation failed).
-[h264 @ 0x558bb4bcf880] Failed to end picture decode after error: 5 (invalid VAContextID).
-[h264 @ 0x558bb4bcf880] hardware accelerator failed to decode picture
-[h264 @ 0x558bb4be6f80] Failed to upload decode parameters: 2 (resource allocation failed).
-[h264 @ 0x558bb4be6f80] Failed to end picture decode after error: 5 (invalid VAContextID).
-[h264 @ 0x558bb4be6f80] hardware accelerator failed to decode picture
-[h264 @ 0x558bb4c14740] Failed to upload decode parameters: 2 (resource allocation failed).
-[h264 @ 0x558bb4c14740] Failed to end picture decode after error: 5 (invalid VAContextID).
-[h264 @ 0x558bb4c14740] hardware accelerator failed to decode picture
-[h264 @ 0x558bb46dd280] Failed to upload decode parameters: 2 (resource allocation failed).
-[h264 @ 0x558bb46dd280] Failed to end picture decode after error: 5 (invalid VAContextID).
-[h264 @ 0x558bb46dd280] hardware accelerator failed to decode picture
-[h264 @ 0x558bb48e9600] Failed to upload decode parameters: 2 (resource allocation failed).
-[h264 @ 0x558bb48e9600] Failed to end picture decode after error: 5 (invalid VAContextID).
-[h264 @ 0x558bb48e9600] hardware accelerator failed to decode picture
-[h264 @ 0x558bb4bcf880] Failed to upload decode parameters: 2 (resource allocation failed).
-[h264 @ 0x558bb4bcf880] Failed to end picture decode after error: 5 (invalid VAContextID).
-[h264 @ 0x558bb4bcf880] hardware accelerator failed to decode picture
-[h264 @ 0x558bb4be6f80] Failed to upload decode parameters: 2 (resource allocation failed).
-[h264 @ 0x558bb4be6f80] Failed to end picture decode after error: 5 (invalid VAContextID).
-[h264 @ 0x558bb4be6f80] hardware accelerator failed to decode picture
-[h264 @ 0x558bb4c14740] Failed to upload decode parameters: 2 (resource allocation failed).
-[h264 @ 0x558bb4c14740] Failed to end picture decode after error: 5 (invalid VAContextID).
-[h264 @ 0x558bb4c14740] hardware accelerator failed to decode picture
-[h264 @ 0x558bb46dd280] Failed to upload decode parameters: 2 (resource allocation failed).
-[h264 @ 0x558bb46dd280] Failed to end picture decode after error: 5 (invalid VAContextID).
-[h264 @ 0x558bb46dd280] hardware accelerator failed to decode picture
-papaours@papaours:~$ # Tester si GStreamer peut lire votre fichier
-gst-launch-1.0 playbin uri=file:///usr/share/sddm/themes/sddm-video/votre-video.mp4
+Voici la marche à suivre pour Debian 13 (Trixie), en utilisant une pile **LAMP** (Linux, Apache, MariaDB, PHP).
 
-# Réinstaller les plugins si nécessaire (Debian/Ubuntu)
-sudo apt-get install --reinstall gstreamer1.0-plugins-good gstreamer1.0-libav
-Définition du pipeline à PAUSED...
-ERREUR : de l’élément /GstPlayBin:playbin0/GstURIDecodeBin:uridecodebin0/GstFileSrc:source : Ressource introuvable.
-Information de débogage supplémentaire :
-../plugins/elements/gstfilesrc.c(585): gst_file_src_start (): /GstPlayBin:playbin0/GstURIDecodeBin:uridecodebin0/GstFileSrc:source:
-No such file "/usr/share/sddm/themes/sddm-video/votre-video.mp4"
-ERREUR : le pipeline refuse de passer en phase de préparation.
-ERREUR : de l’élément /GstPlayBin:playbin0/GstURIDecodeBin:uridecodebin0/GstFileSrc:source : Erreur GStreamer : échec de changement d’état et un élément n’a pas pu signaler un message d’erreur correct contenant la raison de l’échec.
-Information de débogage supplémentaire :
-../libs/gst/base/gstbasesrc.c(3616): gst_base_src_start (): /GstPlayBin:playbin0/GstURIDecodeBin:uridecodebin0/GstFileSrc:source:
-Failed to start
-ERREUR : le pipeline refuse de passer en phase de préparation.
-ERREUR : de l’élément /GstPlayBin:playbin0/GstURIDecodeBin:uridecodebin0/GstFileSrc:source : Ressource introuvable.
-Information de débogage supplémentaire :
-../plugins/elements/gstfilesrc.c(585): gst_file_src_start (): /GstPlayBin:playbin0/GstURIDecodeBin:uridecodebin0/GstFileSrc:source:
-No such file "/usr/share/sddm/themes/sddm-video/votre-video.mp4"
-ERREUR : le pipeline refuse de passer en phase de préparation.
-ERREUR : de l’élément /GstPlayBin:playbin0/GstURIDecodeBin:uridecodebin0/GstFileSrc:source : Erreur GStreamer : échec de changement d’état et un élément n’a pas pu signaler un message d’erreur correct contenant la raison de l’échec.
-Information de débogage supplémentaire :
-../libs/gst/base/gstbasesrc.c(3616): gst_base_src_start (): /GstPlayBin:playbin0/GstURIDecodeBin:uridecodebin0/GstFileSrc:source:
-Failed to start
-ERREUR : le pipeline refuse de passer en phase de préparation.
-Impossible de mettre en pause le pipeline.
-Définition du pipeline à NULL…
-Libération du pipeline…
-[sudo] Mot de passe de papaours : 
-Lecture des listes de paquets... Fait
-Construction de l'arbre des dépendances... Fait
-Lecture des informations d'état... Fait      
-Le paquet suivant a été installé automatiquement et n'est plus nécessaire :
-  linux-image-6.12.63+deb13-amd64
-Veuillez utiliser « sudo apt autoremove » pour le supprimer.
-0 mis à jour, 0 nouvellement installés, 2 réinstallés, 0 à enlever et 5 non mis à jour.
-Il est nécessaire de prendre 2.453 kB dans les archives.
-Après cette opération, 0 o d'espace disque supplémentaires seront utilisés.
-Réception de : 1 http://deb.debian.org/debian trixie/main amd64 gstreamer1.0-libav amd64 1.26.2-1 [110 kB]
-Réception de : 2 http://deb.debian.org/debian trixie/main amd64 gstreamer1.0-plugins-good amd64 1.26.2-1 [2.343 kB]
-2.453 ko réceptionnés en 0s (15,5 Mo/s)              
-(Lecture de la base de données... 258634 fichiers et répertoires déjà installés.)
-Préparation du dépaquetage de .../gstreamer1.0-libav_1.26.2-1_amd64.deb ...
-Dépaquetage de gstreamer1.0-libav:amd64 (1.26.2-1) sur (1.26.2-1) ...
-Préparation du dépaquetage de .../gstreamer1.0-plugins-good_1.26.2-1_amd64.deb ...
-Dépaquetage de gstreamer1.0-plugins-good:amd64 (1.26.2-1) sur (1.26.2-1) ...
-Paramétrage de gstreamer1.0-plugins-good:amd64 (1.26.2-1) ...
-Paramétrage de gstreamer1.0-libav:amd64 (1.26.2-1) ...
-papaours@papaours:~$ # Vérifier la config active
-cat /etc/sddm.conf.d/sddm-video.conf
+---
 
-# S'assurer qu'il n'y a pas de conflit avec /etc/sddm.conf
-ls -la /etc/sddm.conf 2>/dev/null && echo "Fichier conflictuel présent !" || echo "OK"
-cat: /etc/sddm.conf.d/sddm-video.conf: Aucun fichier ou dossier de ce nom
--rw-r--r-- 1 root root 0  1 avr 14:41 /etc/sddm.conf
-Fichier conflictuel présent !
-papaours@papaours:~$ 
+## 1. Préparation du système
+Connectez-vous en root et mettez à jour votre système :
+
+```bash
+apt update && apt upgrade -y
+apt install apache2 mariadb-server libapache2-mod-php php-gd php-mysql \
+php-curl php-mbstring php-intl php-gmp php-bcmath php-xml php-zip php-bz2 -y
+```
+
+---
+
+## 2. Configuration de la base de données
+Sécurisez MariaDB et créez la base pour Nextcloud :
+
+```bash
+mysql_secure_installation
+# Suivez les instructions, puis connectez-vous :
+mysql -u root -p
+```
+
+Dans le shell MariaDB :
+```sql
+CREATE DATABASE nextcloud;
+GRANT ALL PRIVILEGES ON nextcloud.* TO 'nextclouduser'@'localhost' IDENTIFIED BY 'votre_mot_de_passe';
+FLUSH PRIVILEGES;
+EXIT;
+```
+
+---
+
+## 3. Installation de Nextcloud
+Téléchargez la dernière version stable :
+
+```bash
+cd /var/www/
+wget https://download.nextcloud.com/server/releases/latest.tar.bz2
+tar -xjf latest.tar.bz2
+chown -R www-data:www-data /var/www/nextcloud
+chmod -R 755 /var/www/nextcloud
+```
+
+Créez ensuite un fichier de configuration Apache dans `/etc/apache2/sites-available/nextcloud.conf` et activez le site avec `a2ensite nextcloud.conf && systemctl reload apache2`.
+
+---
+
+## 4. Accéder aux fichiers de `/home/papaours/`
+C'est ici que ça devient intéressant. Par défaut, Nextcloud ne voit que ses propres dossiers. Pour "streamer" ou voir vos fichiers JSON/LRC situés ailleurs :
+
+### A. Gérer les permissions (Crucial)
+L'utilisateur `www-data` (Apache) doit pouvoir lire votre dossier personnel. **Attention aux risques de sécurité.**
+```bash
+# Ajoute l'utilisateur web au groupe de votre utilisateur
+usermod -aG papaours www-data
+# Donne les droits de lecture/exécution au groupe sur le dossier concerné
+chmod 750 /home/papaours
+chmod 750 /home/papaours/Téléchargements
+```
+
+### B. Utiliser l'application "External Storage"
+1. Connectez-vous à votre interface Nextcloud via votre navigateur.
+2. Allez dans les **Applications** et activez **"External storage support"**.
+3. Allez dans les **Paramètres d'administration** > **Stockage externe**.
+4. Ajoutez un stockage de type **Local**.
+5. Configuration :
+   * **Nom du dossier** : Téléchargements Papaours
+   * **Configuration** : `/home/papaours/Téléchargements`
+6. Si une pastille verte apparaît, Nextcloud a accès au dossier.
+
+---
+
+## 5. "Streamer" le JSON et le LRC
+Nextcloud ne sait pas "streamer" du JSON par défaut (il va simplement le proposer en téléchargement ou l'ouvrir en texte). 
+
+* **Pour le JSON** : Installez l'application **"Text"** (souvent par défaut) pour les éditer, ou **"Dashboard"** si vous voulez intégrer des flux.
+* **Pour le LRC (Paroles)** : Le format LRC est techniquement du texte. Nextcloud l'ouvrira avec l'éditeur de texte. Si votre but est de synchroniser cela avec de la musique :
+    * Installez l'application **Music** dans Nextcloud.
+    * Si vos fichiers `.lrc` ont le même nom que vos fichiers `.mp3` dans le même dossier, l'application Music les détectera automatiquement pour afficher les paroles pendant la lecture.
+
+
+
+---
+
+## 6. Automatisation du scan
+Si vous ajoutez des fichiers manuellement dans `/home/papaours/Téléchargements` sans passer par l'interface Nextcloud, ils n'apparaîtront pas immédiatement. Il faut forcer un scan :
+
+```bash
+sudo -u www-data php /var/www/nextcloud/occ files:scan --all
+```
+*Astuce : Vous pouvez mettre cette commande dans une **crontab** pour qu'elle s'exécute toutes les 15 minutes.*
+
+Est-ce que vous prévoyez d'utiliser une application spécifique pour lire ces fichiers JSON, ou voulez-vous simplement qu'ils soient accessibles via une API ?
