@@ -1,1 +1,5 @@
-Comlment installer Nextcloud ainsi que le configurer pour faire streamer des fichiers JSON/LRXC présent dans le dossier /home/papaours/Téléchargements/*.json ou *.lrc sur Debian 13 ?
+export DuckDNS_Token="cc3349a0-e9a1-47aa-bf6b-483a9a9ab5ae"
+
+acme.sh --issue --dns dns_duckdns -d beartify.duckdns.org
+acme.sh --issue --dns dns_duckdns -d grizzlyrics.duckdns.org
+acme.sh --issue --dns dns_duckdns -d grizzly-stream.duckdns.org
