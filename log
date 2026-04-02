@@ -1,7 +1,8 @@
-acme.sh --set-default-ca --server letsencrypt
+# Supprimer les certificats en échec
+sudo rm -rf /var/lib/caddy/.local/share/caddy/certificates/
 
-export DuckDNS_Token="cc3349a0-e9a1-47aa-bf6b-483a9a9ab5ae"
+# Redémarrer Caddy
+sudo systemctl restart caddy
 
-acme.sh --issue --dns dns_duckdns -d beartify.duckdns.org
-acme.sh --issue --dns dns_duckdns -d grizzlyrics.duckdns.org
-acme.sh --issue --dns dns_duckdns -d grizzly-stream.duckdns.org
+# Voir l'obtention des certificats en temps réel
+sudo journalctl -u caddy -f --no-pager | grep -E "beartify|certificate|acme"
