@@ -1,35 +1,23 @@
-grizzlyrics.duckdns.org {
-    root * /var/www/nextcloud
-    php_fastcgi unix//run/php/php8.4-fpm.sock
-    file_server
-}
+papaours@papaours:~$ sudo systemctl status caddy
+[sudo] Mot de passe de papaours : 
+× caddy.service - Caddy
+     Loaded: loaded (/usr/lib/systemd/system/caddy.service; enabled; preset: enabled)
+     Active: failed (Result: exit-code) since Fri 2026-04-03 17:30:15 CEST; 8min ago
+ Invocation: af2473f739b44a32baf58f1aa6f75aa2
+       Docs: https://caddyserver.com/docs/
+    Process: 1166 ExecStart=/usr/bin/caddy run --environ --config /etc/caddy/Caddyfile (code=exited, status=1/FAILU>
+   Main PID: 1166 (code=exited, status=1/FAILURE)
+     Status: "loading new config: http app module: start: listening on :80: listen tcp :80: bind: address already i>
+   Mem peak: 52.3M
+        CPU: 81ms
 
-grizzly-stream.duckdns.org {
-
-    # WoL script sur /wol
-    handle_path /wol* {
-        reverse_proxy 127.0.0.1:8080
-    }
-
-    # Jellyfin sur la racine
-    handle_path /* {
-        reverse_proxy 127.0.0.1:8096
-    }
-
-    # Optionnel : logs
-    log {
-        output file /var/log/caddy/access.log
-    }
-}
-
-beartify.duckdns.org {
-    root * /var/www/html/player
-    file_server
-    encode gzip
-
-    # Headers de sécurité (optionnels)
-    header {
-        X-Content-Type-Options "nosniff"
-        X-Frame-Options "SAMEORIGIN"
-    }
-}
+avr 03 17:30:15 papaours caddy[1166]: {"level":"info","ts":1775230215.4743876,"logger":"http.auto_https","msg":"ena>
+avr 03 17:30:15 papaours caddy[1166]: {"level":"info","ts":1775230215.475828,"logger":"tls.cache.maintenance","msg">
+avr 03 17:30:15 papaours caddy[1166]: {"level":"info","ts":1775230215.4794168,"logger":"http","msg":"enabling HTTP/>
+avr 03 17:30:15 papaours caddy[1166]: {"level":"info","ts":1775230215.4810898,"logger":"http.log","msg":"server run>
+avr 03 17:30:15 papaours caddy[1166]: {"level":"info","ts":1775230215.48129,"logger":"tls.cache.maintenance","msg":>
+avr 03 17:30:15 papaours caddy[1166]: {"level":"info","ts":1775230215.481307,"logger":"http","msg":"servers shuttin>
+avr 03 17:30:15 papaours caddy[1166]: Error: loading initial config: loading new config: http app module: start: li>
+avr 03 17:30:15 papaours systemd[1]: caddy.service: Main process exited, code=exited, status=1/FAILURE
+avr 03 17:30:15 papaours systemd[1]: caddy.service: Failed with result 'exit-code'.
+avr 03 17:30:15 papaours systemd[1]: Failed to start caddy.service - Caddy.
