@@ -83,9 +83,6 @@ sudo systemctl restart sddm
 ```bash
 # Qt6
 sddm-greeter-qt6 --test-mode --theme /usr/share/sddm/themes/sddm-video
-
-# Qt5
-sddm-greeter --test-mode --theme /usr/share/sddm/themes/sddm-video
 ```
 
 ---
