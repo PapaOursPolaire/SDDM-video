@@ -95,21 +95,28 @@ check_sddm_compatibility() {
         return 1
     fi
 
+    # FIX : sddm --version peut se bloquer indéfiniment sur certaines distros
+    # (SDDM tente de joindre un socket système). On limite à 4 secondes.
     local sddm_version
-    sddm_version=$(sddm --version 2>&1 | grep -oP '\d+\.\d+\.\d+' | head -1)
-    print_info "Version SDDM détectée : $sddm_version"
+    sddm_version=$(timeout 4 sddm --version 2>&1 | grep -oP '\d+\.\d+\.\d+' | head -1 || true)
+    if [[ -n "$sddm_version" ]]; then
+        print_info "Version SDDM détectée : $sddm_version"
+    else
+        print_info "Version SDDM : indéterminée (binaire présent)"
+    fi
 
-    # Vérifier Qt6
-    if command -v qmake6 &>/dev/null || command -v qmake-qt6 &>/dev/null; then
+    # Vérifier Qt6 via qmake ou pkg-config — sans appeler de binaire bloquant
+    if command -v qmake6 &>/dev/null || command -v qmake-qt6 &>/dev/null \
+       || pkg-config --exists Qt6Core 2>/dev/null; then
         print_success "Qt6 détecté"
     else
         print_warning "Qt6 non détecté — installation recommandée"
     fi
 
-    # Autre display manager actif ?
+    # Autre display manager actif ? (timeout 4s au cas où systemctl est lent)
     local active_dm
-    active_dm=$(systemctl list-units --type=service --state=running \
-        | grep -E 'gdm|lightdm|lxdm' | awk '{print $1}' || true)
+    active_dm=$(timeout 4 systemctl list-units --type=service --state=running \
+        2>/dev/null | grep -E 'gdm|lightdm|lxdm' | awk '{print $1}' || true)
     if [[ -n "$active_dm" ]]; then
         print_warning "Autre gestionnaire d'affichage actif : $active_dm"
         echo -e "${YELLOW}Il sera désactivé et remplacé par SDDM${NC}"
