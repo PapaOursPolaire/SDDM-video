@@ -144,26 +144,44 @@ install_dependencies() {
         apt)
             print_info "Mise à jour des dépôts..."
             sudo apt update
+
+            # Candidats : noms Debian ET Ubuntu listés ensemble.
+            # On ne garde que ceux présents dans les dépôts via apt-cache show.
+            local candidates=(
+                sddm
+                qml6-module-qtmultimedia
+                qt6-multimedia-qml
+                qml6-module-qtquick
+                qml6-module-qtquick-controls
+                qml6-module-qtquick-controls2
+                qml6-module-qtquick-layouts
+                libqt6multimedia6
+                qt6-multimedia-dev
+                gstreamer1.0-plugins-good
+                gstreamer1.0-plugins-bad
+                gstreamer1.0-plugins-ugly
+                curl
+                wget
+            )
+
+            local to_install=()
+            print_info "Vérification des paquets disponibles..."
+            for pkg in "${candidates[@]}"; do
+                if apt-cache show "$pkg" &>/dev/null; then
+                    to_install+=("$pkg")
+                    print_success "  trouvé  : $pkg"
+                else
+                    print_warning "  absent  : $pkg (ignoré)"
+                fi
+            done
+
+            if [[ ${#to_install[@]} -eq 0 ]]; then
+                print_error "Aucun paquet Qt6 trouvé — vérifiez vos dépôts"
+                return 1
+            fi
+
             print_info "Installation via apt..."
-            # Noms Debian/Ubuntu (différents selon la distro)
-            # Sur Debian Trixie/Bookworm : qml6-module-qtmultimedia
-            # Sur Ubuntu 22.04+          : qt6-multimedia-qml
-            # On tente les deux, apt ignore silencieusement les introuvables
-            # avec --ignore-missing
-            sudo apt install -y --ignore-missing \
-                sddm \
-                qml6-module-qtmultimedia \
-                qt6-multimedia-qml \
-                qml6-module-qtquick \
-                qml6-module-qtquick-controls \
-                qml6-module-qtquick-controls2 \
-                qml6-module-qtquick-layouts \
-                libqt6multimedia6 \
-                qt6-multimedia-dev \
-                gstreamer1.0-plugins-good \
-                gstreamer1.0-plugins-bad \
-                gstreamer1.0-plugins-ugly \
-                curl wget
+            sudo apt install -y "${to_install[@]}"
             ;;
         dnf)
             print_info "Installation via dnf..."
