@@ -965,12 +965,13 @@ purge_sddm_config() {
     echo ""
     print_info "Vérification post-purge..."
     local remaining
-    remaining=$(find /etc/sddm* /usr/lib/sddm/sddm.conf.d/         -maxdepth 1 -name "*.conf" 2>/dev/null | wc -l)
+    # || true indispensable : find retourne 1 si un chemin n'existe pas (tue set -e)
+    remaining=$(find /etc/ /usr/lib/sddm/         -maxdepth 2 -name "sddm*.conf" 2>/dev/null | wc -l || true)
     if [[ "$remaining" -eq 0 ]]; then
         print_success "Aucune configuration résiduelle — table rase"
     else
         print_warning "$remaining fichier(s) de config restant(s) — vérifiez manuellement"
-        find /etc/sddm* /usr/lib/sddm/sddm.conf.d/ -maxdepth 1 -name "*.conf" 2>/dev/null             | while read -r f; do print_warning "  → $f"; done
+        find /etc/ /usr/lib/sddm/ -maxdepth 2 -name "sddm*.conf" 2>/dev/null             | while read -r f; do print_warning "  → $f"; done || true
     fi
 }
 
