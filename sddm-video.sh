@@ -11,6 +11,30 @@
 
 set -euo pipefail
 
+# ── Gestionnaire d'erreur global ─────────────────────────────────────────────
+# Affiche la ligne fautive et sort proprement sans laisser de fichiers à moitié créés
+_error_handler() {
+    local exit_code=$?
+    local line_number=$1
+    echo ""
+    echo -e "\033[0;31m✗ ERREUR fatale à la ligne ${line_number} (code ${exit_code})\033[0m"
+    echo -e "\033[1;33m⚠ Le thème peut être partiellement installé.\033[0m"
+    echo -e "\033[1;33m  Relancez le script pour repartir de zéro.\033[0m"
+    echo ""
+    exit "${exit_code}"
+}
+trap '_error_handler $LINENO' ERR
+
+# ── Nettoyage sur interruption (Ctrl+C) ───────────────────────────────────────
+_interrupt_handler() {
+    echo ""
+    print_warning "Script interrompu par l'utilisateur"
+    echo -e "\033[1;33m  Relancez le script pour continuer.\033[0m"
+    echo ""
+    exit 130
+}
+trap '_interrupt_handler' INT TERM
+
 # Couleurs pour l'affichage
 readonly RED='\033[0;31m'
 readonly GREEN='\033[0;32m'
@@ -912,29 +936,53 @@ print_final_summary() {
 
     [[ -f "$THEME_DIR/background.mp4"     ]] && echo -e "${GREEN}✓${NC} Vidéo de fond      : background.mp4"
     [[ -f "$THEME_DIR/loginterminalc.png" ]] && echo -e "${GREEN}✓${NC} Fond panneau login : loginterminalc.png"
-    echo -e "${GREEN}✓${NC} Main.qml Qt6       : créé (sans dépendance KDE)"
+    [[ -f "$THEME_DIR/Main.qml"           ]] && echo -e "${GREEN}✓${NC} Main.qml Qt6       : présent"
+    [[ -f "$THEME_DIR/theme.conf"         ]] && echo -e "${GREEN}✓${NC} theme.conf         : présent"
+    [[ -f "$THEME_DIR/metadata.desktop"   ]] && echo -e "${GREEN}✓${NC} metadata.desktop   : présent"
+    [[ -L /usr/bin/sddm-greeter          ]] && echo -e "${GREEN}✓${NC} sddm-greeter       : symlink présent"
 
     echo ""
     echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
     echo -e "${CYAN}  PROCHAINES ÉTAPES${NC}"
     echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
     echo ""
-    echo -e "${YELLOW}1.${NC} Redémarrez pour activer SDDM"
-    echo -e "${YELLOW}2.${NC} Le thème Fallout sera appliqué automatiquement"
-    echo -e "${YELLOW}3.${NC} Pour tester manuellement :"
+    echo -e "${YELLOW}1.${NC} Redémarrez SDDM ou le système pour appliquer le thème"
+    echo -e "${YELLOW}2.${NC} Pour tester manuellement :"
     echo -e "   ${CYAN}sddm-greeter --test-mode --theme $THEME_DIR${NC}"
-    echo ""
-
-    # FIX : compgen au lieu du glob dans [[ ]]
-    if compgen -G "${SDDM_CONF}.backup."* &>/dev/null; then
-        echo -e "${BLUE}Backup disponible :${NC} ${SDDM_CONF}.backup.*"
-    fi
-
     echo ""
     echo -e "${GREEN}═══════════════════════════════════════════════════════════════${NC}"
     echo -e "${GREEN}  Bienvenue dans le Wasteland !${NC}"
     echo -e "${GREEN}═══════════════════════════════════════════════════════════════${NC}"
     echo ""
+}
+
+#############################################################################
+# Redémarrage SDDM
+#############################################################################
+
+restart_sddm_prompt() {
+    print_header "REDÉMARRAGE DE SDDM"
+
+    echo -e "${YELLOW}⚠  Redémarrer SDDM fermera votre session graphique actuelle.${NC}"
+    echo ""
+    read -r -p "Voulez-vous redémarrer SDDM maintenant ? [O/n] : " restart_choice
+
+    case "${restart_choice,,}" in
+        o|oui|y|yes|"")
+            print_info "Redémarrage de SDDM..."
+            # systemctl restart peut couper le terminal — on lance en arrière-plan
+            # avec un délai pour laisser le script terminer proprement
+            (sleep 2 && sudo systemctl restart sddm) &
+            print_success "SDDM redémarre dans 2 secondes — votre session va se fermer"
+            ;;
+        *)
+            print_warning "Redémarrage annulé"
+            echo ""
+            echo -e "${CYAN}Pour appliquer le thème plus tard, lancez :${NC}"
+            echo -e "   ${GREEN}sudo systemctl restart sddm${NC}"
+            echo ""
+            ;;
+    esac
 }
 
 
@@ -1016,9 +1064,18 @@ main() {
     echo ""
 
     # Vérifier les privilèges sudo
-    if [[ $EUID -ne 0 ]] && ! sudo -v; then
-        print_error "Ce script nécessite les privilèges sudo"
-        exit 1
+    if [[ $EUID -ne 0 ]]; then
+        if ! sudo -v 2>/dev/null; then
+            print_error "Ce script nécessite les privilèges sudo"
+            exit 1
+        fi
+        # Garder sudo actif pendant tout le script
+        ( while true; do sudo -v; sleep 50; done ) &
+        local sudo_keepalive_pid=$!
+        trap "kill ${sudo_keepalive_pid} 2>/dev/null || true" EXIT
+        print_success "Privilèges sudo confirmés"
+    else
+        print_success "Exécution en root"
     fi
 
     purge_sddm_config
@@ -1050,6 +1107,7 @@ main() {
         configure_sddm_conf
         enable_sddm_service
         print_final_summary
+        restart_sddm_prompt
     else
         print_warning "Installation annulée ou thème existant conservé"
         exit 0
