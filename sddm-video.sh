@@ -414,9 +414,8 @@ create_main_qml() {
 
     sudo tee "$THEME_DIR/Main.qml" >/dev/null <<'QMLEOF'
 /***************************************************************************
- * Thème SDDM Fallout — Qt6 pur
- * SddmComponents : TextBox, PasswordBox, ComboBox, LayoutBox, TextConstants
- * Boutons        : Rectangle + Text + MouseArea (API stable, zéro surprise)
+ * Thème SDDM Fallout — Qt6
+ * Structure identique à l'original, imports Qt6 uniquement
  ***************************************************************************/
 
 import QtQuick
@@ -428,29 +427,28 @@ Rectangle {
     width:  Screen.width
     height: Screen.height
 
-    LayoutMirroring.enabled:         Qt.locale().textDirection === Qt.RightToLeft
+    LayoutMirroring.enabled:         Qt.locale().textDirection == Qt.RightToLeft
     LayoutMirroring.childrenInherit: true
 
     property int sessionIndex: session.index
 
     TextConstants { id: textConstants }
 
-    // ── Vidéo de fond ─────────────────────────────────────────────────────
+    // ── Vidéo plein écran (Qt6) ───────────────────────────────────────────
     MediaPlayer {
-        id: videoPlayer
+        id: bgVideo
         source: Qt.resolvedUrl("background.mp4")
         loops:  MediaPlayer.Infinite
         audioOutput: AudioOutput { muted: false; volume: 0.3 }
-        videoOutput: videoOutputItem
+        videoOutput: videoOut
         Component.onCompleted: play()
         onErrorOccurred: function(error, errorString) {
-            console.warn("Vidéo indisponible :", errorString)
             fallbackImage.visible = true
         }
     }
 
     VideoOutput {
-        id: videoOutputItem
+        id: videoOut
         anchors.fill: parent
     }
 
@@ -462,11 +460,8 @@ Rectangle {
         visible:  false
     }
 
-    Rectangle { anchors.fill: parent; color: "black"; opacity: 0.25 }
-
-    // ── Horloge haut-droite ───────────────────────────────────────────────
+    // ── Horloge (structure identique à Clock de l'original) ───────────────
     Column {
-        id: clockColumn
         anchors.top:         parent.top
         anchors.right:       parent.right
         anchors.topMargin:   40
@@ -478,225 +473,238 @@ Rectangle {
         Timer {
             interval: 1000; running: true; repeat: true
             onTriggered: {
-                clockColumn.currentTime = Qt.formatTime(new Date(), "hh:mm:ss")
-                clockColumn.currentDate = Qt.formatDate(new Date(), "dddd, MMMM d yyyy")
+                parent.currentTime = Qt.formatTime(new Date(), "hh:mm:ss")
+                parent.currentDate = Qt.formatDate(new Date(), "dddd, MMMM d yyyy")
             }
         }
 
         Text {
             anchors.right: parent.right
-            text: clockColumn.currentTime
+            text:  parent.currentTime
             color: "#eaf5c4"
             font.family: "Consolas"; font.bold: true; font.pixelSize: 90
             horizontalAlignment: Text.AlignRight
         }
         Text {
             anchors.right: parent.right
-            text: clockColumn.currentDate
+            text:  parent.currentDate
             color: "#eaf5c4"
             font.family: "Lucida Console"; font.bold: true; font.pixelSize: 30
             horizontalAlignment: Text.AlignRight
         }
     }
 
-    // ── Panneau de connexion ──────────────────────────────────────────────
-    Image {
-        id: loginPanel
-        anchors.verticalCenter: parent.verticalCenter
-        anchors.right:          parent.right
-        anchors.rightMargin:    50
-        width:  420
-        height: 400
-        source: "loginterminalc.png"
-        fillMode: Image.Stretch
+    // ── Panneau login — structure 1:1 avec l'original ─────────────────────
+    Rectangle {
+        anchors.fill: parent
+        color: "transparent"
 
-        Column {
-            anchors.centerIn: parent
-            spacing: 10
-            width: parent.width - 60
+        Image {
+            id: rectangle
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.right:          parent.right
+            width:  Math.max(370, mainColumn.implicitWidth  + 50)
+            height: Math.max(320, mainColumn.implicitHeight + 50)
+            source: "loginterminalc.png"
 
-            // Titre
-            Text {
-                width: parent.width
-                text:  "ROBCO INDUSTRIES UNIFIED OPERATING SYSTEM"
-                color: "#88FF88"
-                font.family: "Monospace"; font.pixelSize: 11
-                wrapMode: Text.WordWrap
-                horizontalAlignment: Text.AlignHCenter
-            }
+            Column {
+                id: mainColumn
+                anchors.centerIn: parent
+                spacing: 12
 
-            // Nom d'utilisateur
-            Text {
-                width: parent.width
-                text:  textConstants.userName
-                color: "#88FF88"
-                font.bold: true; font.pixelSize: 13
-            }
-            TextBox {
-                id: name
-                width: parent.width; height: 32
-                text:      userModel.lastUser
-                textColor: "#88FF88"
-                color:     "transparent"
-                font.pixelSize: 14
-                KeyNavigation.backtab: btnReboot
-                KeyNavigation.tab:     password
-                Keys.onPressed: function(e) {
-                    if (e.key === Qt.Key_Return || e.key === Qt.Key_Enter) {
-                        sddm.login(name.text, password.text, sessionIndex)
-                        e.accepted = true
-                    }
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    color: "black"
+                    verticalAlignment: Text.AlignVCenter
+                    height: implicitHeight
+                    width:  parent.width
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: 24
+                    elide: Text.ElideRight
+                    horizontalAlignment: Text.AlignHCenter
                 }
-            }
-
-            // Mot de passe
-            Text {
-                width: parent.width
-                text:  textConstants.password
-                color: "#88FF88"
-                font.bold: true; font.pixelSize: 13
-            }
-            PasswordBox {
-                id: password
-                width: parent.width; height: 32
-                textColor: "#88FF88"
-                color:     "transparent"
-                font.pixelSize: 14
-                KeyNavigation.backtab: name
-                KeyNavigation.tab:     session
-                Keys.onPressed: function(e) {
-                    if (e.key === Qt.Key_Return || e.key === Qt.Key_Enter) {
-                        sddm.login(name.text, password.text, sessionIndex)
-                        e.accepted = true
-                    }
-                }
-            }
-
-            // Session + Layout
-            Row {
-                width: parent.width
-                spacing: 6
 
                 Column {
-                    width: parent.width * 0.58
+                    width: parent.width
                     spacing: 4
                     Text {
+                        id: lblName
                         width: parent.width
-                        text:  textConstants.session
+                        text:  textConstants.userName
                         color: "#88FF88"
                         font.bold: true; font.pixelSize: 12
                     }
-                    ComboBox {
-                        id: session
+                    TextBox {
+                        id: name
                         width: parent.width; height: 30
-                        color: "transparent"
-                        model: sessionModel
-                        index: sessionModel.lastIndex
-                        font.pixelSize: 13
-                        KeyNavigation.backtab: password
-                        KeyNavigation.tab:     layoutBox
+                        text:      userModel.lastUser
+                        textColor: "#88FF88"
+                        color:     "transparent"
+                        font.pixelSize: 14
+                        KeyNavigation.backtab: rebootButton
+                        KeyNavigation.tab:     password
+                        Keys.onPressed: function(event) {
+                            if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                                sddm.login(name.text, password.text, sessionIndex)
+                                event.accepted = true
+                            }
+                        }
                     }
                 }
 
                 Column {
-                    width: parent.width * 0.38
+                    width: parent.width
                     spacing: 4
                     Text {
+                        id: lblPassword
                         width: parent.width
-                        text:  textConstants.layout
+                        text:  textConstants.password
                         color: "#88FF88"
                         font.bold: true; font.pixelSize: 12
                     }
-                    LayoutBox {
-                        id: layoutBox
+                    PasswordBox {
+                        id: password
                         width: parent.width; height: 30
-                        color: "transparent"
-                        font.pixelSize: 13
-                        KeyNavigation.backtab: session
-                        KeyNavigation.tab:     btnLogin
+                        textColor: "#88FF88"
+                        color:     "transparent"
+                        font.pixelSize: 14
+                        KeyNavigation.backtab: name
+                        KeyNavigation.tab:     session
+                        Keys.onPressed: function(event) {
+                            if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                                sddm.login(name.text, password.text, sessionIndex)
+                                event.accepted = true
+                            }
+                        }
                     }
                 }
-            }
 
-            // Message d'erreur
-            Text {
-                id: errorMessage
-                width: parent.width
-                text:  textConstants.prompt
-                color: "#88FF88"
-                font.pixelSize: 11
-                horizontalAlignment: Text.AlignHCenter
-            }
+                Row {
+                    spacing: 4
+                    width: parent.width / 2
 
-            // Boutons — Rectangle+Text+MouseArea, zéro dépendance SddmComponents
-            Row {
-                anchors.horizontalCenter: parent.horizontalCenter
-                spacing: 6
-
-                // Bouton Login
-                Rectangle {
-                    id: btnLogin
-                    width: 120; height: 38
-                    color: "transparent"
-                    border.color: "#00FF00"; border.width: 2; radius: 3
-
-                    MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape:  Qt.PointingHandCursor
-                        onClicked:    sddm.login(name.text, password.text, sessionIndex)
-                        onEntered:    parent.color = "#1a331a"
-                        onExited:     parent.color = "transparent"
+                    Column {
+                        width: parent.width * 1.3
+                        spacing: 4
+                        anchors.bottom: parent.bottom
+                        Text {
+                            id: lblSession
+                            width: parent.width
+                            text:  textConstants.session
+                            color: "#88FF88"
+                            wrapMode: TextEdit.WordWrap
+                            font.bold: true; font.pixelSize: 12
+                        }
+                        ComboBox {
+                            id: session
+                            width: parent.width; height: 30
+                            font.pixelSize: 14
+                            color:     "transparent"
+                            model:     sessionModel
+                            index:     sessionModel.lastIndex
+                            KeyNavigation.backtab: password
+                            KeyNavigation.tab:     layoutBox
+                        }
                     }
-                    KeyNavigation.backtab: layoutBox
-                    KeyNavigation.tab:     btnReboot
-                    Keys.onReturnPressed: sddm.login(name.text, password.text, sessionIndex)
+
+                    Column {
+                        width: parent.width * 0.7
+                        spacing: 4
+                        anchors.bottom: parent.bottom
+                        Text {
+                            id: lblLayout
+                            width: parent.width
+                            text:  textConstants.layout
+                            color: "#88FF88"
+                            wrapMode: TextEdit.WordWrap
+                            font.bold: true; font.pixelSize: 12
+                        }
+                        LayoutBox {
+                            id: layoutBox
+                            width: parent.width; height: 30
+                            font.pixelSize: 14
+                            color: "transparent"
+                            KeyNavigation.backtab: session
+                            KeyNavigation.tab:     loginButton
+                        }
+                    }
                 }
 
-                // Bouton Reboot
-                Rectangle {
-                    id: btnReboot
-                    width: 120; height: 38
-                    color: "transparent"
-                    border.color: "#FFFF00"; border.width: 2; radius: 3
-
-                    MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape:  Qt.PointingHandCursor
-                        onClicked:    sddm.reboot()
-                        onEntered:    parent.color = "#33331a"
-                        onExited:     parent.color = "transparent"
+                Column {
+                    width: parent.width
+                    Text {
+                        id: errorMessage
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text:  textConstants.prompt
+                        font.pixelSize: 10
+                        color: "#88FF88"
                     }
-                    KeyNavigation.backtab: btnLogin
-                    KeyNavigation.tab:     btnPower
-                    Keys.onReturnPressed: sddm.reboot()
                 }
 
-                // Bouton Power
-                Rectangle {
-                    id: btnPower
-                    width: 120; height: 38
-                    color: "transparent"
-                    border.color: "#FF0000"; border.width: 2; radius: 3
+                Row {
+                    anchors.horizontalCenter: parent.horizontalCenter
 
-                    MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape:  Qt.PointingHandCursor
-                        onClicked:    sddm.powerOff()
-                        onEntered:    parent.color = "#331a1a"
-                        onExited:     parent.color = "transparent"
+                    Button {
+                        id: loginButton
+                        text: textConstants.login
+                        width: 73; height: 75
+                        color:     "transparent"
+                        textColor: "transparent"
+                        enabled: true
+                        onClicked: sddm.login(name.text, password.text, sessionIndex)
+                        KeyNavigation.backtab: layoutBox
+                        KeyNavigation.tab:     shutdownButton
+                        anchors.top: parent.bottom; anchors.topMargin: -24
+                        MouseArea {
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape:  Qt.PointingHandCursor
+                            onClicked:    sddm.login(name.text, password.text, sessionIndex)
+                        }
                     }
-                    KeyNavigation.backtab: btnReboot
-                    KeyNavigation.tab:     name
-                    Keys.onReturnPressed: sddm.powerOff()
+
+                    Button {
+                        id: rebootButton
+                        text: textConstants.reboot
+                        width: 73; height: 75
+                        color:     "transparent"
+                        textColor: "transparent"
+                        enabled: true
+                        onClicked: sddm.reboot()
+                        KeyNavigation.backtab: shutdownButton
+                        KeyNavigation.tab:     name
+                        anchors.top: parent.bottom; anchors.topMargin: -24
+                        MouseArea {
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape:  Qt.PointingHandCursor
+                            onClicked:    sddm.reboot()
+                        }
+                    }
+
+                    Button {
+                        id: shutdownButton
+                        text: "Power"
+                        width: 73; height: 75
+                        color:     "transparent"
+                        textColor: "transparent"
+                        enabled: true
+                        onClicked: sddm.powerOff()
+                        KeyNavigation.backtab: loginButton
+                        KeyNavigation.tab:     rebootButton
+                        anchors.top: parent.bottom; anchors.topMargin: -24
+                        MouseArea {
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape:  Qt.PointingHandCursor
+                            onClicked:    sddm.powerOff()
+                        }
+                    }
                 }
             }
         }
     }
 
-    // ── Connexions SDDM ───────────────────────────────────────────────────
     Connections {
         target: sddm
         function onLoginSucceeded() {
