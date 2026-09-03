@@ -108,6 +108,275 @@ detect_package_manager() {
 }
 
 #############################################################################
+# Vérification de l'environnement de bureau (KDE/Plasma requis)
+#############################################################################
+# Le thème utilise "import SddmComponents 2.0", un module fourni par les
+# paquets de plateforme SDDM de KDE. Sur un système sans KDE/Plasma installé,
+# ce module est absent et le greeter plante au chargement du QML (souvent
+# un écran noir/figé sans message clair). On bloque donc tôt avec un message
+# explicite plutôt que de laisser l'utilisateur découvrir ça après coup.
+
+check_desktop_environment() {
+    print_header "VÉRIFICATION DE L'ENVIRONNEMENT DE BUREAU"
+
+    local kde_found=false
+    local kde_marker=""
+
+    # SddmComponents est fourni par plasma-workspace / sddm-kcm selon la distro.
+    # On cherche le module QML lui-même plutôt que de deviner le nom du paquet,
+    # ce qui reste valable quel que soit le gestionnaire de paquets.
+    local qml_search_paths=(
+        /usr/lib/qt6/qml/SddmComponents
+        /usr/lib/x86_64-linux-gnu/qt6/qml/SddmComponents
+        /usr/lib64/qt6/qml/SddmComponents
+        /usr/share/sddm/themes/*/SddmComponents
+    )
+    for p in "${qml_search_paths[@]}"; do
+        # shellcheck disable=SC2086 # expansion volontaire du glob
+        if compgen -G "$p" &>/dev/null; then
+            kde_found=true
+            kde_marker="$p"
+            break
+        fi
+    done
+
+    # Filet de sécurité : présence de plasmashell ou startplasma, signe fiable
+    # qu'un Plasma est installé même si le chemin QML ci-dessus a changé.
+    if [[ "$kde_found" == false ]]; then
+        if command -v plasmashell &>/dev/null || command -v startplasma-wayland &>/dev/null \
+           || command -v startplasma-x11 &>/dev/null; then
+            kde_found=true
+            kde_marker="binaire plasmashell/startplasma détecté"
+        fi
+    fi
+
+    if [[ "$kde_found" == true ]]; then
+        print_success "KDE Plasma détecté ($kde_marker)"
+        return 0
+    fi
+
+    print_error "KDE Plasma ne semble pas installé sur ce système"
+    echo -e "${YELLOW}Ce thème dépend du module QML SddmComponents 2.0,${NC}"
+    echo -e "${YELLOW}fourni par les paquets de plateforme KDE/Plasma.${NC}"
+    echo -e "${YELLOW}Sans lui, le greeter plante silencieusement au chargement du thème.${NC}"
+    echo ""
+    echo -e "${CYAN}Environnements détectés sur ce système :${NC}"
+    for de_bin in gnome-shell xfce4-session cinnamon mate-session lxqt-session budgie-desktop deepin-session; do
+        command -v "$de_bin" &>/dev/null && echo -e "  ${BLUE}•${NC} $de_bin"
+    done
+    echo ""
+    read -r -p "Continuer quand même (déconseillé, risque d'écran figé) ? [o/N] : " force_continue
+    if [[ ! "${force_continue,,}" =~ ^o(ui)?$ ]]; then
+        print_info "Installation annulée. Installez KDE Plasma (paquet 'plasma-desktop' ou équivalent) puis relancez."
+        exit 1
+    fi
+    print_warning "Poursuite forcée sans KDE Plasma — le greeter peut planter"
+}
+
+#############################################################################
+# Détection matérielle : CPU, GPU dédié, iGPU, et installation du bon
+# driver d'accélération vidéo (VAAPI/VDPAU) pour éviter le bug de crash
+# du plugin FFmpeg Qt6Multimedia rencontré avec un GPU NVIDIA sans son
+# driver VAAPI dédié (nvidia-vaapi-driver / nvidia_drv_video.so absent).
+#############################################################################
+
+DETECTED_CPU_VENDOR=""
+DETECTED_GPU_VENDORS=()      # peut contenir plusieurs entrées : nvidia, amd, intel
+HAS_DISCRETE_GPU=false
+HAS_IGPU=false
+
+detect_hardware() {
+    print_header "DÉTECTION MATÉRIELLE (CPU / GPU / iGPU)"
+
+    # ── CPU ────────────────────────────────────────────────────────────────
+    if grep -qi "GenuineIntel" /proc/cpuinfo 2>/dev/null; then
+        DETECTED_CPU_VENDOR="Intel"
+    elif grep -qi "AuthenticAMD" /proc/cpuinfo 2>/dev/null; then
+        DETECTED_CPU_VENDOR="AMD"
+    elif grep -qiE "ARM|Apple" /proc/cpuinfo 2>/dev/null; then
+        DETECTED_CPU_VENDOR="ARM"
+    else
+        DETECTED_CPU_VENDOR="inconnu"
+    fi
+    print_success "CPU : $DETECTED_CPU_VENDOR"
+
+    # ── GPU(s) via lspci ─────────────────────────────────────────────────
+    if ! command -v lspci &>/dev/null; then
+        print_warning "lspci non trouvé — installation minimale pour la détection"
+        case "$DETECTED_PM" in
+            apt)     sudo apt install -y pciutils ;;
+            pacman)  sudo pacman -S --needed --noconfirm pciutils ;;
+            dnf)     sudo dnf install -y pciutils ;;
+            zypper)  sudo zypper install -y pciutils ;;
+            emerge)  sudo emerge --ask n sys-apps/pciutils ;;
+        esac
+    fi
+
+    local gpu_lines
+    gpu_lines=$(lspci 2>/dev/null | grep -iE "VGA|3D controller|Display controller" || true)
+
+    if [[ -z "$gpu_lines" ]]; then
+        print_warning "Aucun GPU détecté via lspci"
+    else
+        echo -e "${CYAN}GPU(s) détecté(s) :${NC}"
+        echo "$gpu_lines" | while read -r line; do echo "  ${BLUE}•${NC} $line"; done
+    fi
+
+    echo "$gpu_lines" | grep -qi "nvidia"                        && DETECTED_GPU_VENDORS+=("nvidia")
+    echo "$gpu_lines" | grep -qiE "amd|advanced micro devices|ati" && DETECTED_GPU_VENDORS+=("amd")
+    echo "$gpu_lines" | grep -qi "intel"                          && DETECTED_GPU_VENDORS+=("intel")
+
+    # Un GPU Intel/AMD listé en "3D controller" seul (pas de sortie vidéo
+    # propre) ou combiné avec un GPU NVIDIA/AMD dédié = iGPU probable.
+    if printf '%s\n' "${DETECTED_GPU_VENDORS[@]:-}" | grep -qi "intel"; then
+        HAS_IGPU=true
+    fi
+    if [[ " ${DETECTED_GPU_VENDORS[*]:-} " == *" nvidia "* ]] || \
+       { [[ " ${DETECTED_GPU_VENDORS[*]:-} " == *" amd "* ]] && [[ $(echo "$gpu_lines" | wc -l) -gt 1 ]]; }; then
+        HAS_DISCRETE_GPU=true
+    fi
+
+    if [[ ${#DETECTED_GPU_VENDORS[@]} -eq 0 ]]; then
+        print_warning "Marque de GPU non identifiée automatiquement"
+    else
+        print_info "Marques GPU retenues : ${DETECTED_GPU_VENDORS[*]}"
+        print_info "GPU dédié : $HAS_DISCRETE_GPU | iGPU : $HAS_IGPU"
+    fi
+
+    install_video_accel_drivers
+}
+
+# Installe le driver VAAPI/VDPAU adapté à chaque marque de GPU détectée.
+# C'est ce qui manquait chez PapaOurs : nvidia-vaapi-driver absent →
+# libva ne trouve pas nvidia_drv_video.so → va_openDriver() échoue →
+# le plugin FFmpeg de Qt6Multimedia segfault dès l'init, thème vidéo cassé.
+install_video_accel_drivers() {
+    print_header "INSTALLATION DES DRIVERS D'ACCÉLÉRATION VIDÉO"
+
+    local pkgs=()
+
+    for vendor in "${DETECTED_GPU_VENDORS[@]:-}"; do
+        case "$vendor" in
+            nvidia)
+                print_info "GPU NVIDIA détecté → driver VAAPI dédié requis pour la vidéo du thème"
+                case "$DETECTED_PM" in
+                    apt)    pkgs+=("nvidia-vaapi-driver") ;;
+                    pacman) pkgs+=("libva-nvidia-driver") ;;
+                    dnf)    pkgs+=("nvidia-vaapi-driver") ;;
+                    zypper) pkgs+=("nvidia-vaapi-driver") ;;
+                    emerge) pkgs+=("media-libs/nvidia-vaapi-driver") ;;
+                esac
+                ;;
+            amd)
+                case "$DETECTED_PM" in
+                    apt)    pkgs+=("mesa-va-drivers" "mesa-vdpau-drivers") ;;
+                    pacman) pkgs+=("libva-mesa-driver" "mesa-vdpau") ;;
+                    dnf)    pkgs+=("mesa-va-drivers" "mesa-vdpau-drivers") ;;
+                    zypper) pkgs+=("libva-mesa-driver" "libvdpau_radeonsi") ;;
+                    emerge) pkgs+=("media-libs/mesa") ;;
+                esac
+                ;;
+            intel)
+                case "$DETECTED_PM" in
+                    apt)    pkgs+=("intel-media-va-driver" "i965-va-driver") ;;
+                    pacman) pkgs+=("intel-media-driver" "libva-intel-driver") ;;
+                    dnf)    pkgs+=("intel-media-driver" "libva-intel-driver") ;;
+                    zypper) pkgs+=("intel-media-driver" "libva-intel-driver") ;;
+                    emerge) pkgs+=("media-libs/intel-media-driver") ;;
+                esac
+                ;;
+        esac
+    done
+
+    if [[ ${#pkgs[@]} -eq 0 ]]; then
+        print_warning "Aucun paquet d'accélération vidéo à installer (marque non reconnue)"
+        return 0
+    fi
+
+    # Dédoublonnage
+    local unique_pkgs=()
+    while IFS= read -r p; do unique_pkgs+=("$p"); done < <(printf '%s\n' "${pkgs[@]}" | sort -u)
+
+    print_info "Paquets à installer : ${unique_pkgs[*]}"
+    case "$DETECTED_PM" in
+        apt)    sudo apt install -y "${unique_pkgs[@]}" || print_warning "Certains paquets n'ont pas pu être installés" ;;
+        pacman) sudo pacman -S --needed --noconfirm "${unique_pkgs[@]}" || print_warning "Certains paquets n'ont pas pu être installés" ;;
+        dnf)    sudo dnf install -y "${unique_pkgs[@]}" || print_warning "Certains paquets n'ont pas pu être installés" ;;
+        zypper) sudo zypper install -y "${unique_pkgs[@]}" || print_warning "Certains paquets n'ont pas pu être installés" ;;
+        emerge) sudo emerge --ask n "${unique_pkgs[@]}" || print_warning "Certains paquets n'ont pas pu être installés" ;;
+    esac
+
+    # Vérification effective via vainfo si disponible
+    if command -v vainfo &>/dev/null; then
+        if vainfo &>/dev/null; then
+            print_success "VAAPI fonctionnel (vainfo répond correctement)"
+        else
+            print_warning "vainfo signale une erreur — le décodage matériel pourrait échouer"
+            print_warning "Le script forcera QT_FFMPEG_DECODING_HW_DEVICE_TYPES=none en secours (voir configure_sddm_conf)"
+        fi
+    fi
+}
+
+#############################################################################
+# Détection de la session graphique actuelle (Wayland/X11) et avertissement
+# en cas de changement demandé par rapport à la session active
+#############################################################################
+
+CURRENT_SESSION_TYPE=""
+
+detect_current_session() {
+    print_header "DÉTECTION DE LA SESSION GRAPHIQUE ACTUELLE"
+
+    # XDG_SESSION_TYPE n'est fiable que dans une session utilisateur active ;
+    # en root/SSH/Cockpit il peut être vide ou valoir "tty"/"unspecified".
+    CURRENT_SESSION_TYPE="${XDG_SESSION_TYPE:-}"
+
+    if [[ -z "$CURRENT_SESSION_TYPE" ]] && command -v loginctl &>/dev/null; then
+        local seat_session
+        seat_session=$(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1}' | head -1)
+        if [[ -n "$seat_session" ]]; then
+            CURRENT_SESSION_TYPE=$(loginctl show-session "$seat_session" -p Type --value 2>/dev/null || true)
+        fi
+    fi
+
+    case "$CURRENT_SESSION_TYPE" in
+        wayland) print_success "Session actuelle détectée : Wayland" ;;
+        x11)     print_success "Session actuelle détectée : X11" ;;
+        *)       print_warning "Session actuelle indéterminée (normal en SSH/Cockpit/root)"
+                 CURRENT_SESSION_TYPE="inconnue" ;;
+    esac
+}
+
+# À appeler après que l'utilisateur a choisi Wayland/X11 dans configure_sddm_conf.
+# Compare au choix effectif et avertit clairement en cas de changement, car un
+# passage X11→Wayland (ou l'inverse) peut casser un thème qui dépendait de
+# comportements spécifiques à l'ancien serveur d'affichage (vécu par PapaOurs :
+# le module vidéo du thème passait par une voie différente sous X11, masquant
+# un bug VAAPI qui n'apparaissait qu'une fois basculé en Wayland).
+warn_if_session_type_changed() {
+    local requested="$1"   # "wayland" ou "x11"
+
+    if [[ "$CURRENT_SESSION_TYPE" == "inconnue" ]]; then
+        return 0
+    fi
+
+    if [[ "$CURRENT_SESSION_TYPE" != "$requested" ]]; then
+        echo ""
+        print_warning "Changement de serveur d'affichage : $CURRENT_SESSION_TYPE → $requested"
+        echo -e "${YELLOW}Ce changement peut révéler des bugs invisibles sous l'ancien serveur${NC}"
+        echo -e "${YELLOW}(pilotes vidéo, décodage matériel, intégrations de shell, etc.).${NC}"
+        echo -e "${YELLOW}Un redémarrage complet (pas juste SDDM) est recommandé après application.${NC}"
+        echo ""
+        read -r -p "Confirmer le passage à $requested ? [O/n] : " confirm_switch
+        if [[ "$confirm_switch" =~ ^[Nn]$ ]]; then
+            print_info "Changement annulé — conservation de $CURRENT_SESSION_TYPE"
+            return 1
+        fi
+    fi
+    return 0
+}
+
+#############################################################################
 # Vérification de la compatibilité SDDM
 #############################################################################
 
@@ -787,6 +1056,13 @@ configure_sddm_conf() {
             ;;
     esac
 
+    # Avertir si ce choix diffère de la session actuellement active
+    if ! warn_if_session_type_changed "$display_server"; then
+        # L'utilisateur a refusé le changement — on revient à la session en cours
+        display_server="$CURRENT_SESSION_TYPE"
+        [[ "$display_server" == "wayland" ]] && USE_WAYLAND=true || USE_WAYLAND=false
+    fi
+
     # Détecter un curseur disponible universellement
     local cursor_theme="Adwaita"
     if [[ -d "/usr/share/icons/breeze_cursors" ]]; then
@@ -845,6 +1121,21 @@ MinimumUid=1000
 HideUsers=
 HideShells=/sbin/nologin,/bin/false
 EOF
+    fi
+
+    # Si un GPU NVIDIA a été détecté, forcer un override systemd désactivant
+    # le décodage matériel FFmpeg en secours : même avec nvidia-vaapi-driver
+    # installé, certaines combinaisons driver/kernel restent instables et
+    # font planter libffmpegmediaplugin.so au chargement du thème vidéo.
+    if [[ " ${DETECTED_GPU_VENDORS[*]:-} " == *" nvidia "* ]]; then
+        print_info "GPU NVIDIA : ajout d'un filet de sécurité systemd (décodage logiciel FFmpeg)"
+        sudo mkdir -p /etc/systemd/system/sddm.service.d
+        sudo tee /etc/systemd/system/sddm.service.d/nvidia-ffmpeg-fallback.conf >/dev/null <<'EOF'
+[Service]
+Environment=QT_FFMPEG_DECODING_HW_DEVICE_TYPES=none
+EOF
+        sudo systemctl daemon-reload
+        print_success "Filet de sécurité installé (supprimable via /etc/systemd/system/sddm.service.d/nvidia-ffmpeg-fallback.conf si non nécessaire)"
     fi
 
     # Bloquer /etc/sddm.conf.d/ : créer le dossier vide verrouillé
@@ -931,7 +1222,10 @@ print_final_summary() {
     echo -e "${BLUE}Système détecté :${NC}          $DETECTED_DISTRO"
     echo -e "${BLUE}Gestionnaire de paquets :${NC}  $DETECTED_PM"
     echo -e "${BLUE}Répertoire du thème :${NC}      $THEME_DIR"
-    echo -e "${BLUE}Serveur d'affichage :${NC}      $([ "$USE_WAYLAND" = true ] && echo "Wayland" || echo "X11")"
+    echo -e "${BLUE}Serveur d'affichage :${NC}      $([ "$USE_WAYLAND" = true ] && echo "Wayland" || echo "X11") (précédemment : $CURRENT_SESSION_TYPE)"
+    echo -e "${BLUE}CPU :${NC}                      ${DETECTED_CPU_VENDOR:-inconnu}"
+    echo -e "${BLUE}GPU(s) :${NC}                   ${DETECTED_GPU_VENDORS[*]:-non identifié}"
+    echo -e "${BLUE}GPU dédié / iGPU :${NC}         ${HAS_DISCRETE_GPU} / ${HAS_IGPU}"
     echo ""
 
     [[ -f "$THEME_DIR/background.mp4"     ]] && echo -e "${GREEN}✓${NC} Vidéo de fond      : background.mp4"
@@ -992,6 +1286,16 @@ restart_sddm_prompt() {
 
 purge_sddm_config() {
     print_header "PURGE DE LA CONFIGURATION SDDM EXISTANTE"
+
+    echo -e "${YELLOW}Cette étape va supprimer TOUS les autres thèmes SDDM installés,${NC}"
+    echo -e "${YELLOW}/etc/sddm.conf, /etc/sddm.conf.d/ et /etc/xdg/sddm.conf.${NC}"
+    echo ""
+    read -r -p "Voulez-vous vraiment repartir de zéro ? [o/N] : " purge_confirm
+    if [[ ! "${purge_confirm,,}" =~ ^o(ui)?$ ]]; then
+        print_info "Purge ignorée — la configuration existante et les autres thèmes sont conservés."
+        print_info "En cas de conflit avec un ancien thème, relancez ce script et acceptez la purge."
+        return 0
+    fi
 
     # ── Tous les thèmes sauf le nôtre ─────────────────────────────────────
     local themes_dir="/usr/share/sddm/themes"
@@ -1082,6 +1386,10 @@ main() {
 
     detect_package_manager
 
+    check_desktop_environment
+
+    detect_current_session
+
     # FIX : install_dependencies appelé UNE SEULE FOIS, selon le cas
     if ! check_sddm_compatibility; then
         echo ""
@@ -1096,6 +1404,8 @@ main() {
         # SDDM présent — installer quand même les dépendances Qt6 manquantes
         install_dependencies
     fi
+
+    detect_hardware
 
     select_video_file
 
