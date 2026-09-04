@@ -376,6 +376,39 @@ warn_if_session_type_changed() {
     return 0
 }
 
+# Corrige un bug distinct mais découvert dans la même session : sur un
+# système avec le driver NVIDIA en DKMS, les modules noyau (nvidia,
+# nvidia-drm, nvidia-modeset, nvidia-uvm) ne sont pas automatiquement inclus
+# dans l'initramfs par "update-initramfs", ce qui empêche Plymouth d'utiliser
+# le GPU dès le tout début du boot (rendu dégradé : carrés blancs / curseur
+# clignotant à la place du splash). On les ajoute explicitement — avec le
+# NOM DE FICHIER réel sur disque (tirets, ex. "nvidia-drm"), pas le nom du
+# module chargé en mémoire (underscores, "nvidia_drm") : initramfs-tools
+# résout mal ce dernier lorsqu'il est listé explicitement.
+fix_plymouth_nvidia_initramfs() {
+    [[ " ${DETECTED_GPU_VENDORS[*]:-} " == *" nvidia "* ]] || return 0
+
+    print_header "CORRECTION PLYMOUTH POUR GPU NVIDIA (modules DKMS dans l'initramfs)"
+
+    local modules_file="/etc/initramfs-tools/modules"
+    [[ -f "$modules_file" ]] || { print_warning "$modules_file absent (pas initramfs-tools ?) — ignoré"; return 0; }
+
+    local mod
+    for mod in nvidia nvidia-modeset nvidia-drm nvidia-uvm; do
+        grep -qxF "$mod" "$modules_file" || echo "$mod" | sudo tee -a "$modules_file" >/dev/null
+    done
+
+    # Corrige un nom d'alias obsolète parfois présent sur les installs plus
+    # anciennes ("nvidia-current-drm" au lieu de "nvidia-drm").
+    if [[ -f /etc/modprobe.d/nvidia-drm-kms.conf ]]; then
+        sudo sed -i 's/nvidia-current-drm/nvidia-drm/' /etc/modprobe.d/nvidia-drm-kms.conf
+    fi
+
+    sudo depmod -a "$(uname -r)" 2>/dev/null
+    sudo update-initramfs -u -k all
+    print_success "Modules NVIDIA ajoutés à l'initramfs — le splash Plymouth devrait s'afficher correctement au prochain boot"
+}
+
 #############################################################################
 # Vérification de la compatibilité SDDM
 #############################################################################
@@ -1123,19 +1156,82 @@ HideShells=/sbin/nologin,/bin/false
 EOF
     fi
 
-    # Si un GPU NVIDIA a été détecté, forcer un override systemd désactivant
-    # le décodage matériel FFmpeg en secours : même avec nvidia-vaapi-driver
-    # installé, certaines combinaisons driver/kernel restent instables et
-    # font planter libffmpegmediaplugin.so au chargement du thème vidéo.
+    # Si un GPU NVIDIA a été détecté, plusieurs filets de sécurité systemd,
+    # issus d'une session de debug réelle ayant révélé une chaîne de races
+    # au cold boot sous Wayland (X11 ne les exposait pas) :
+    #
+    # 1) nvidia-persistenced + attente active "nvidia-smi" : le GPU n'a pas
+    #    fini son initialisation juste après boot → décodage H264 matériel
+    #    échoue en boucle → gèle le greeter (pas un crash, un freeze CPU).
+    # 2) seatd : sans lui, Weston retombe sur le backend logind pour la
+    #    gestion du "seat", qui entre en course avec Plymouth pour la prise
+    #    du rôle DRM master sur la carte graphique ("Device or resource
+    #    busy" / "couldn't commit new state: Permission denied"). seatd est
+    #    le mécanisme prévu pour éviter cette course.
+    # 3) QSG_RENDER_LOOP=basic : sous Wayland, la boucle de rendu Qt Quick
+    #    threadée par défaut crée une race avec l'initialisation du moteur
+    #    de rendu (RHI) par le plugin vidéo FFmpeg de Qt6Multimedia, qui
+    #    plante en SIGSEGV dans QRhi::addCleanupCallback. Le mode basic
+    #    (non threadé) supprime cette race à la source. X11 ne déclenchait
+    #    pas ce chemin de code, d'où l'absence de ce bug avant la bascule.
+    # 4) After=...plymouth-quit-wait.service + Restart=on-failure : même
+    #    avec seatd, Plymouth peut relâcher le DRM master juste après que
+    #    SDDM ait déjà tenté de le prendre. On ordonne explicitement SDDM
+    #    après la fin de Plymouth, et en dernier recours on autorise SDDM à
+    #    se relancer automatiquement s'il échoue quand même une fois — évite
+    #    un écran figé nécessitant une intervention manuelle.
     if [[ " ${DETECTED_GPU_VENDORS[*]:-} " == *" nvidia "* ]]; then
-        print_info "GPU NVIDIA : ajout d'un filet de sécurité systemd (décodage logiciel FFmpeg)"
+        print_info "GPU NVIDIA : mise en place des filets de sécurité SDDM (GPU warmup, seatd, rendu Wayland)"
+
+        sudo systemctl enable --now nvidia-persistenced 2>/dev/null || \
+            print_warning "nvidia-persistenced non disponible sur ce système (paquet absent ?)"
+
+        # seatd : paquet universel sur toutes les distros supportées
+        case "$DETECTED_PM" in
+            apt)    sudo apt install -y seatd ;;
+            pacman) sudo pacman -S --needed --noconfirm seatd ;;
+            dnf)    sudo dnf install -y seatd ;;
+            zypper) sudo zypper install -y seatd ;;
+            emerge) sudo emerge --ask n sys-auth/seatd ;;
+        esac
+        if command -v seatd &>/dev/null; then
+            sudo systemctl enable --now seatd 2>/dev/null
+            # L'utilisateur sddm doit être dans le groupe "video" pour se
+            # connecter au socket de seatd (sinon "Permission denied").
+            sudo usermod -aG video sddm 2>/dev/null
+            print_success "seatd activé, utilisateur sddm ajouté au groupe video"
+        else
+            print_warning "seatd non installé — SDDM utilisera le backend logind (moins stable au cold boot)"
+        fi
+
         sudo mkdir -p /etc/systemd/system/sddm.service.d
-        sudo tee /etc/systemd/system/sddm.service.d/nvidia-ffmpeg-fallback.conf >/dev/null <<'EOF'
+        sudo tee /etc/systemd/system/sddm.service.d/nvidia-gpu-wait.conf >/dev/null <<'EOF'
+[Unit]
+After=nvidia-persistenced.service seatd.service plymouth-quit-wait.service
+Requires=seatd.service
+
 [Service]
-Environment=QT_FFMPEG_DECODING_HW_DEVICE_TYPES=none
+# Attend jusqu'à 15s que le GPU NVIDIA réponde (nvidia-smi OK) avant de
+# démarrer SDDM, pour éviter un freeze du greeter au cold boot pendant
+# l'initialisation du décodage matériel vidéo. Ne bloque jamais le boot
+# au-delà de ce délai : SDDM démarre de toute façon après le timeout.
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 30); do nvidia-smi >/dev/null 2>&1 && exit 0; sleep 0.5; done; exit 0'
+# Supprime la race de rendu Qt Quick / plugin vidéo FFmpeg spécifique à
+# Wayland (SIGSEGV dans QRhi::addCleanupCallback). Coût : rendu non
+# threadé, négligeable pour un greeter de connexion.
+Environment=QSG_RENDER_LOOP=basic
+# Si le freeze persiste malgré tout ce qui précède, décommenter la ligne
+# suivante pour désactiver le décodage matériel FFmpeg (perte de perf,
+# mais élimine la cause du freeze à la racine) :
+#Environment=QT_FFMPEG_DECODING_HW_DEVICE_TYPES=none
+# Filet de sécurité final : si SDDM échoue quand même une fois (race
+# résiduelle sur le DRM master), il se relance seul plutôt que de laisser
+# un écran figé nécessitant "systemctl restart sddm" manuel.
+Restart=on-failure
+RestartSec=1
 EOF
         sudo systemctl daemon-reload
-        print_success "Filet de sécurité installé (supprimable via /etc/systemd/system/sddm.service.d/nvidia-ffmpeg-fallback.conf si non nécessaire)"
+        print_success "Filet de sécurité installé : /etc/systemd/system/sddm.service.d/nvidia-gpu-wait.conf"
     fi
 
     # Bloquer /etc/sddm.conf.d/ : créer le dossier vide verrouillé
@@ -1406,6 +1502,8 @@ main() {
     fi
 
     detect_hardware
+
+    fix_plymouth_nvidia_initramfs
 
     select_video_file
 
